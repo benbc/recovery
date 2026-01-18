@@ -1,0 +1,4 @@
+* git commit current stat so we have a baseline to refer to
+
+* if there are non-photo library files we shouldn't autoresolve _them_ because we don't understand exactly what's going on; but we can still do partial resolves
+* review code that does partial resolves

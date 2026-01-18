@@ -1,9 +1,543 @@
 #!/usr/bin/env -S uv run --script
 #
 # /// script
-# requires-python = '>=3.13.0'
+# requires-python = '>=3.13'
 # dependencies = [
+#   "python-magic",
+#   "pillow",
+#   "imagehash",
+#   "piexif",
+#   "tqdm"
 # ]
 # ///
 
-print("recovery")
+"""
+Photo Recovery Script
+
+Scans a messy archive of old computer backups to extract, deduplicate, and
+organize photos with rich metadata for later browsing.
+"""
+
+import hashlib
+import json
+import logging
+import os
+import re
+import sqlite3
+from collections import defaultdict
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+import imagehash
+import magic
+import piexif
+from PIL import Image
+from tqdm import tqdm
+
+# Configuration
+SOURCE_ROOT = Path("/home/ben/photo-recovery")  # Full directory now
+OUTPUT_ROOT = Path("/home/ben/src/benbc/recovery/organized")  # Output to script dir, not archive
+DB_PATH = OUTPUT_ROOT / "photos.db"
+BATCH_SIZE = 1000  # Commit to DB every N records
+ENABLE_PERCEPTUAL_HASH = False  # Disabled for speed - can run Phase 2 later
+
+# Image MIME types to process
+IMAGE_MIME_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/bmp",
+    "image/tiff",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+}
+
+# Paths to exclude (system files, not photos)
+EXCLUDE_FILENAMES = {".DS_Store", "Thumbs.db", "desktop.ini", ".picasa.ini"}
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PhotoMetadata:
+    """Metadata extracted from a photo file"""
+    id: str  # SHA256 hash
+    path: str  # Organized output path
+    original_path: str
+
+    # Dating
+    date_taken: Optional[datetime]
+    date_source: Optional[str]  # 'exif', 'filename', 'mtime'
+
+    # Camera
+    camera_make: Optional[str]
+    camera_model: Optional[str]
+
+    # Image properties
+    width: Optional[int]
+    height: Optional[int]
+    file_size: int
+    mime_type: str
+
+    # Quality/confidence
+    is_thumbnail: bool
+    best_available: bool
+    confidence_score: int
+
+    # Perceptual hash (optional)
+    perceptual_hash: Optional[str]
+
+    # Timestamps
+    created_at: datetime
+    updated_at: datetime
+
+
+class PhotoDatabase:
+    """SQLite database for photo metadata"""
+
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self.conn = None
+        self.pending_records = []
+
+    def __enter__(self):
+        self.conn = sqlite3.connect(self.db_path)
+        self._create_schema()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.pending_records:
+            self._flush_batch()
+        if self.conn:
+            self.conn.close()
+
+    def _create_schema(self):
+        """Create database schema"""
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS photos (
+                id TEXT PRIMARY KEY,
+                path TEXT,
+                original_path TEXT,
+
+                date_taken DATETIME,
+                date_source TEXT,
+
+                camera_make TEXT,
+                camera_model TEXT,
+
+                width INTEGER,
+                height INTEGER,
+                file_size INTEGER,
+                mime_type TEXT,
+
+                is_thumbnail BOOLEAN,
+                best_available BOOLEAN,
+                confidence_score INTEGER,
+
+                perceptual_hash TEXT,
+
+                tags TEXT,
+                is_favorite BOOLEAN DEFAULT 0,
+
+                created_at DATETIME,
+                updated_at DATETIME
+            )
+        """)
+
+        # Create indexes
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_date_taken ON photos(date_taken)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_confidence ON photos(confidence_score)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_perceptual_hash ON photos(perceptual_hash)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_camera ON photos(camera_make, camera_model)")
+
+        self.conn.commit()
+
+    def add_photo(self, metadata: PhotoMetadata):
+        """Add photo metadata to batch"""
+        self.pending_records.append(metadata)
+        if len(self.pending_records) >= BATCH_SIZE:
+            self._flush_batch()
+
+    def _flush_batch(self):
+        """Write pending records to database"""
+        if not self.pending_records:
+            return
+
+        self.conn.executemany("""
+            INSERT OR REPLACE INTO photos VALUES (
+                :id, :path, :original_path,
+                :date_taken, :date_source,
+                :camera_make, :camera_model,
+                :width, :height, :file_size, :mime_type,
+                :is_thumbnail, :best_available, :confidence_score,
+                :perceptual_hash,
+                NULL, 0,
+                :created_at, :updated_at
+            )
+        """, [self._metadata_to_dict(m) for m in self.pending_records])
+
+        self.conn.commit()
+        logger.info(f"Committed {len(self.pending_records)} records to database")
+        self.pending_records.clear()
+
+    def _metadata_to_dict(self, metadata: PhotoMetadata) -> dict:
+        """Convert metadata to dict for database insertion"""
+        d = asdict(metadata)
+        # Convert datetime objects to ISO strings
+        if d['date_taken']:
+            d['date_taken'] = d['date_taken'].isoformat()
+        d['created_at'] = d['created_at'].isoformat()
+        d['updated_at'] = d['updated_at'].isoformat()
+        return d
+
+    def photo_exists(self, photo_id: str) -> bool:
+        """Check if photo already processed"""
+        cursor = self.conn.execute("SELECT 1 FROM photos WHERE id = ?", (photo_id,))
+        return cursor.fetchone() is not None
+
+    def get_all_perceptual_hashes(self) -> dict[str, str]:
+        """Get mapping of perceptual_hash -> photo_id for deduplication"""
+        cursor = self.conn.execute("SELECT perceptual_hash, id FROM photos")
+        return {row[0]: row[1] for row in cursor.fetchall()}
+
+
+class PhotoExtractor:
+    """Main photo extraction and processing logic"""
+
+    def __init__(self, source_root: Path, output_root: Path, db: PhotoDatabase):
+        self.source_root = source_root
+        self.output_root = output_root
+        self.db = db
+        self.stats = {
+            'total_files': 0,
+            'images_found': 0,
+            'images_processed': 0,
+            'skipped_existing': 0,
+            'errors': 0,
+        }
+
+    def extract_all(self):
+        """Main extraction pipeline"""
+        logger.info(f"Starting extraction from {self.source_root}")
+
+        # Create output directories
+        for conf in ['high_confidence', 'medium_confidence', 'low_confidence']:
+            (self.output_root / 'images' / conf).mkdir(parents=True, exist_ok=True)
+
+        # Scan all files
+        all_files = list(self.source_root.rglob("*"))
+        self.stats['total_files'] = len(all_files)
+
+        logger.info(f"Found {len(all_files)} total files to scan")
+
+        # Process each file
+        for file_path in tqdm(all_files, desc="Processing files"):
+            if not file_path.is_file():
+                continue
+
+            if file_path.name in EXCLUDE_FILENAMES:
+                continue
+
+            # Skip Mac resource forks
+            if file_path.name.startswith("._"):
+                continue
+
+            try:
+                self._process_file(file_path)
+            except Exception as e:
+                self.stats['errors'] += 1
+                logger.error(f"Error processing {file_path}: {e}")
+
+        logger.info("Extraction complete!")
+        logger.info(f"Stats: {self.stats}")
+
+    def _process_file(self, file_path: Path):
+        """Process a single file"""
+        # Check MIME type
+        mime_type = magic.from_file(str(file_path), mime=True)
+
+        if mime_type not in IMAGE_MIME_TYPES:
+            return
+
+        self.stats['images_found'] += 1
+
+        # Calculate hash
+        file_hash = self._calculate_hash(file_path)
+
+        # Skip if already processed
+        if self.db.photo_exists(file_hash):
+            self.stats['skipped_existing'] += 1
+            return
+
+        # Extract metadata
+        metadata = self._extract_metadata(file_path, file_hash, mime_type)
+
+        if not metadata:
+            return
+
+        # Copy file to organized location
+        self._copy_to_output(file_path, metadata)
+
+        # Add to database
+        self.db.add_photo(metadata)
+        self.stats['images_processed'] += 1
+
+    def _calculate_hash(self, file_path: Path) -> str:
+        """Calculate SHA256 hash of file"""
+        sha256 = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+
+    def _extract_metadata(self, file_path: Path, file_hash: str, mime_type: str) -> Optional[PhotoMetadata]:
+        """Extract all metadata from image file"""
+        try:
+            # Open image
+            img = Image.open(file_path)
+            width, height = img.size
+
+            # Calculate perceptual hash (optional, slow)
+            if ENABLE_PERCEPTUAL_HASH:
+                phash = str(imagehash.phash(img))
+            else:
+                phash = None
+
+            # Extract EXIF data
+            exif_data = self._extract_exif(file_path)
+
+            # Determine date
+            date_taken, date_source = self._determine_date(file_path, exif_data)
+
+            # Analyze path for confidence scoring
+            is_thumbnail = self._is_thumbnail_path(file_path)
+            confidence = self._calculate_confidence(
+                file_path, exif_data, width, height, is_thumbnail
+            )
+
+            # Build metadata
+            now = datetime.now()
+            metadata = PhotoMetadata(
+                id=file_hash,
+                path="",  # Will be set in _copy_to_output
+                original_path=str(file_path),
+                date_taken=date_taken,
+                date_source=date_source,
+                camera_make=exif_data.get('make'),
+                camera_model=exif_data.get('model'),
+                width=width,
+                height=height,
+                file_size=file_path.stat().st_size,
+                mime_type=mime_type,
+                is_thumbnail=is_thumbnail,
+                best_available=True,  # Will update during deduplication
+                confidence_score=confidence,
+                perceptual_hash=phash,
+                created_at=now,
+                updated_at=now,
+            )
+
+            return metadata
+
+        except Exception as e:
+            logger.warning(f"Could not extract metadata from {file_path}: {e}")
+            return None
+
+    def _extract_exif(self, file_path: Path) -> dict:
+        """Extract EXIF data from image"""
+        exif_data = {}
+
+        try:
+            exif_dict = piexif.load(str(file_path))
+
+            # Camera make/model
+            if piexif.ImageIFD.Make in exif_dict.get("0th", {}):
+                exif_data['make'] = exif_dict["0th"][piexif.ImageIFD.Make].decode('utf-8', errors='ignore').strip()
+
+            if piexif.ImageIFD.Model in exif_dict.get("0th", {}):
+                exif_data['model'] = exif_dict["0th"][piexif.ImageIFD.Model].decode('utf-8', errors='ignore').strip()
+
+            # Date taken
+            if piexif.ExifIFD.DateTimeOriginal in exif_dict.get("Exif", {}):
+                date_str = exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal].decode('utf-8')
+                try:
+                    exif_data['date_taken'] = datetime.strptime(date_str, '%Y:%m:%d %H:%M:%S')
+                except ValueError:
+                    pass
+
+        except Exception as e:
+            logger.debug(f"No EXIF data in {file_path}: {e}")
+
+        return exif_data
+
+    def _determine_date(self, file_path: Path, exif_data: dict) -> tuple[Optional[datetime], Optional[str]]:
+        """Determine best date for photo"""
+        # Try EXIF first
+        if 'date_taken' in exif_data:
+            return exif_data['date_taken'], 'exif'
+
+        # Try filename patterns
+        filename_date = self._parse_date_from_filename(file_path.name)
+        if filename_date:
+            return filename_date, 'filename'
+
+        # Fall back to file mtime
+        mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+        return mtime, 'mtime'
+
+    def _parse_date_from_filename(self, filename: str) -> Optional[datetime]:
+        """Extract date from filename patterns"""
+        # Common camera filename patterns
+        patterns = [
+            # IMG_20231225_123456.jpg
+            r'(\d{4})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})',
+            # IMG_20231225.jpg or DSC_20231225.jpg
+            r'(\d{4})(\d{2})(\d{2})',
+            # 2023-12-25_*.jpg
+            r'(\d{4})-(\d{2})-(\d{2})',
+            # 20231225_*.jpg
+            r'^(\d{4})(\d{2})(\d{2})',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, filename)
+            if match:
+                try:
+                    groups = match.groups()
+                    if len(groups) >= 3:
+                        year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
+                        # Sanity check
+                        if 1990 <= year <= 2030 and 1 <= month <= 12 and 1 <= day <= 31:
+                            if len(groups) >= 6:
+                                # Has time component
+                                hour, minute, second = int(groups[3]), int(groups[4]), int(groups[5])
+                                return datetime(year, month, day, hour, minute, second)
+                            else:
+                                return datetime(year, month, day)
+                except (ValueError, IndexError):
+                    continue
+
+        return None
+
+    def _is_thumbnail_path(self, file_path: Path) -> bool:
+        """Check if path indicates this is a thumbnail"""
+        path_lower = str(file_path).lower()
+
+        # Check for thumbnail directories
+        thumbnail_indicators = [
+            '/thumbnails/', '/previews/', '/thumb/', '/.thumbnails/',
+            '/cache/', '/.cache/'
+        ]
+
+        for indicator in thumbnail_indicators:
+            if indicator in path_lower:
+                return True
+
+        # Check for thumbnail filename patterns
+        name_lower = file_path.name.lower()
+        if name_lower.startswith('thumb_') or '_thumb' in name_lower:
+            return True
+        if '_1024.' in name_lower or '_512.' in name_lower:
+            return True
+
+        return False
+
+    def _calculate_confidence(self, file_path: Path, exif_data: dict,
+                             width: int, height: int, is_thumbnail: bool) -> int:
+        """Calculate confidence score (0-100) that this is a personal photo"""
+        score = 50  # Start neutral
+
+        path_lower = str(file_path).lower()
+        name_lower = file_path.name.lower()
+
+        # Camera EXIF data
+        if exif_data.get('make') or exif_data.get('model'):
+            score += 40
+
+        # Camera filename patterns
+        camera_patterns = ['img_', 'dsc', 'dscn', 'dscf', 'p000', 'p100']
+        if any(name_lower.startswith(p) for p in camera_patterns):
+            score += 20
+
+        # Photo directories
+        photo_dirs = ['/pictures/', '/photos/', '/dcim/', '/camera/', '/my pictures/']
+        if any(d in path_lower for d in photo_dirs):
+            score += 20
+
+        # Reasonable dimensions
+        if width >= 800 and height >= 800:
+            score += 10
+
+        # Penalties
+
+        # Thumbnail
+        if is_thumbnail:
+            score -= 15
+
+        # Cache/temp directories
+        if '/cache/' in path_lower or '/temp/' in path_lower or '/.trash' in path_lower:
+            score -= 20
+
+        # Stock/generic indicators
+        generic_indicators = ['stock', 'wallpaper', 'icon', 'template', 'sample']
+        if any(ind in path_lower for ind in generic_indicators):
+            score -= 20
+
+        # Very small images (likely icons)
+        if width < 200 or height < 200:
+            score -= 20
+
+        return max(0, min(100, score))
+
+    def _copy_to_output(self, source_path: Path, metadata: PhotoMetadata):
+        """Create hardlink to file in organized output location"""
+        # Determine confidence bucket
+        if metadata.confidence_score >= 70:
+            bucket = 'high_confidence'
+        elif metadata.confidence_score >= 40:
+            bucket = 'medium_confidence'
+        else:
+            bucket = 'low_confidence'
+
+        # Preserve original extension
+        ext = source_path.suffix or '.jpg'
+        dest_path = self.output_root / 'images' / bucket / f"{metadata.id}{ext}"
+
+        # Create hardlink (not copy) to save space
+        # If dest exists (shouldn't happen with hash-based names), remove it first
+        if dest_path.exists():
+            dest_path.unlink()
+        os.link(source_path, dest_path)
+
+        # Update metadata with final path
+        metadata.path = str(dest_path.relative_to(self.output_root))
+
+
+def main():
+    """Main entry point"""
+    logger.info("Photo Recovery Script Starting")
+    logger.info(f"Source: {SOURCE_ROOT}")
+    logger.info(f"Output: {OUTPUT_ROOT}")
+    logger.info(f"Perceptual hashing: {'ENABLED' if ENABLE_PERCEPTUAL_HASH else 'DISABLED (for speed)'}")
+
+    # Create output directory
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+
+    # Run extraction
+    with PhotoDatabase(DB_PATH) as db:
+        extractor = PhotoExtractor(SOURCE_ROOT, OUTPUT_ROOT, db)
+        extractor.extract_all()
+
+    logger.info("Done!")
+
+
+if __name__ == "__main__":
+    main()
