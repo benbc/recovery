@@ -4,53 +4,34 @@
 <h2 style="margin-bottom: 20px;">Overview</h2>
 <div class="stats">
     <div class="stat-card">
-        <div class="stat-value">{{ stats['total_groups']|number_format }}</div>
-        <div class="stat-label">Total Duplicate Groups</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-value">{{ stats['total_photos']|number_format }}</div>
+        <div class="stat-value">{{ total_photos|number_format }}</div>
         <div class="stat-label">Total Photos in Groups</div>
     </div>
-    <div class="stat-card">
-        <div class="stat-value">{{ stats['suggested_keeps']|number_format }}</div>
-        <div class="stat-label">Photos to Keep</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-value">{{ (stats['total_photos'] - stats['suggested_keeps'])|number_format }}</div>
-        <div class="stat-label">Photos to Reject</div>
-    </div>
-</div>
-
-<h2 style="margin-top: 40px; margin-bottom: 20px;">Auto-Resolution Results</h2>
-<div class="stats">
     <div class="stat-card" style="background: #e8f5e9;">
-        <div class="stat-value" style="color: #2e7d32;">{{ auto_stats['auto_resolved_groups']|number_format }}</div>
-        <div class="stat-label">Auto-Resolved Groups</div>
+        <div class="stat-value" style="color: #2e7d32;">{{ rejected_count|number_format }}</div>
+        <div class="stat-label">Rejected</div>
+    </div>
+    <div class="stat-card" style="background: #e8f5e9;">
+        <div class="stat-value" style="color: #2e7d32;">{{ resolved_groups|number_format }}</div>
+        <div class="stat-label">Groups Resolved</div>
     </div>
     <div class="stat-card" style="background: #fff3e0;">
-        <div class="stat-value" style="color: #e65100;">{{ manual_stats['manual_groups']|number_format }}</div>
-        <div class="stat-label">Require Manual Review</div>
-    </div>
-    <div class="stat-card" style="background: #e8f5e9;">
-        <div class="stat-value" style="color: #2e7d32;">{{ auto_stats['auto_rejects']|number_format }}</div>
-        <div class="stat-label">Derivatives Auto-Rejected</div>
-    </div>
-    <div class="stat-card" style="background: #f3e5f5;">
-        <div class="stat-value" style="color: #6a1b9a;">{{ ((auto_stats['auto_resolved_groups'] * 100.0 / stats['total_groups'])|round(1)) }}%</div>
-        <div class="stat-label">Groups Auto-Resolved</div>
+        <div class="stat-value" style="color: #e65100;">{{ groups_needing_review|number_format }}</div>
+        <div class="stat-label">Groups Need Review</div>
     </div>
 </div>
 
 <div style="margin: 30px 0;">
-    <a href="/groups" class="btn">Review Remaining {{ manual_stats['manual_groups']|number_format }} Groups</a>
+    <a href="/groups" class="btn">Review {{ groups_needing_review|number_format }} Groups ({{ photos_needing_review|number_format }} photos)</a>
 </div>
 
-<h2 style="margin-top: 40px; margin-bottom: 20px;">Group Size Distribution</h2>
+{% if size_dist %}
+<h2 style="margin-top: 40px; margin-bottom: 20px;">Groups Needing Review by Size</h2>
 <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
     <table style="width: 100%; border-collapse: collapse;">
         <thead>
             <tr style="border-bottom: 2px solid #ddd;">
-                <th style="padding: 10px; text-align: left;">Photos per Group</th>
+                <th style="padding: 10px; text-align: left;">Photos in Group</th>
                 <th style="padding: 10px; text-align: right;">Number of Groups</th>
                 <th style="padding: 10px; text-align: right;">Total Photos</th>
             </tr>
@@ -58,21 +39,13 @@
         <tbody>
             {% for row in size_dist %}
             <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 10px;">{{ row['group_size'] }} photos</td>
+                <td style="padding: 10px;">{{ row['remaining_photos'] }} photos</td>
                 <td style="padding: 10px; text-align: right;">{{ row['count']|number_format }}</td>
-                <td style="padding: 10px; text-align: right;">{{ (row['group_size'] * row['count'])|number_format }}</td>
+                <td style="padding: 10px; text-align: right;">{{ (row['remaining_photos'] * row['count'])|number_format }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-// Custom number formatting filter
-document.querySelectorAll('[data-number]').forEach(el => {
-    el.textContent = parseInt(el.getAttribute('data-number')).toLocaleString();
-});
-</script>
+{% endif %}
 {% endblock %}

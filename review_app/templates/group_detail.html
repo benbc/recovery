@@ -138,7 +138,7 @@
 {% block content %}
 <div class="navigation">
     <div class="group-info">
-        Group {{ current_idx }} of {{ total_groups }} ({{ photos[0]['group_size'] }} photos)
+        Group {{ group_id }} ({{ photos|length }} photos)
     </div>
     <div class="nav-buttons">
         {% if prev_group %}
@@ -163,13 +163,10 @@
 
 <div class="photos-grid">
     {% for photo in photos %}
-    <div class="photo-card {% if photo['is_suggested_keeper'] %}keeper selected{% endif %}"
+    <div class="photo-card {% if loop.first %}selected{% endif %}"
          data-photo-id="{{ photo['photo_id'] }}"
          onclick="toggleSelection(this)">
-        <div class="photo-rank">#{{ photo['rank_in_group'] }}</div>
-        {% if photo['is_suggested_keeper'] %}
-        <div class="keeper-badge">✓ SUGGESTED</div>
-        {% endif %}
+        <div class="photo-rank">#{{ loop.index }}</div>
         <img src="/image/{{ photo['path'] }}" class="photo-img" alt="Photo">
         <div class="photo-info">
             <div class="photo-meta">
@@ -213,8 +210,8 @@
 <script>
 let selectedPhotos = new Set();
 
-// Initialize with current keepers
-document.querySelectorAll('.photo-card.keeper').forEach(card => {
+// Initialize with first photo selected (highest quality)
+document.querySelectorAll('.photo-card.selected').forEach(card => {
     selectedPhotos.add(card.getAttribute('data-photo-id'));
 });
 updateCount();
@@ -265,7 +262,7 @@ function saveSelection() {
         return;
     }
 
-    fetch('/api/mark_keeps', {
+    fetch('/api/reject', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({group_id: groupId, keep_ids: keepIds})
