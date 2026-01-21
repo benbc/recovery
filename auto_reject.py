@@ -18,6 +18,8 @@ Rejection rules:
    (these have filters applied)
 4. FACE_THUMBNAIL: Photo is a face detection crop (modelresources/ path,
    small <=500px, and square)
+5. STOCK_IMAGE: Photo is a stock greeting card image (in Thumbnails path
+   with 3-digit filename like 024.jpg)
 """
 
 import re
@@ -67,6 +69,25 @@ def is_photobooth_pictures(path: str) -> bool:
 def is_modelresources_path(path: str) -> bool:
     """Check if path is in modelresources (face detection area)."""
     return "/modelresources/" in path.lower()
+
+
+def is_stock_image(path: str) -> bool:
+    """
+    Check if photo is a stock greeting card image.
+
+    These are characterized by:
+    - Located in /Thumbnails/ path
+    - Filename is a 3-digit number (e.g., 024.jpg, 015_1024.jpg)
+    """
+    if "/thumbnails/" not in path.lower():
+        return False
+
+    filename = Path(path).stem  # Remove extension
+    # Remove _1024 suffix if present
+    filename = re.sub(r"_1024$", "", filename)
+
+    # Check if it's exactly 3 digits
+    return bool(re.match(r"^\d{3}$", filename))
 
 
 # -----------------------------------------------------------------------------
@@ -191,6 +212,21 @@ def check_face_thumbnail_rule(photo: dict, cluster: list[dict]) -> str | None:
     return "face_thumbnail"
 
 
+def check_stock_image_rule(photo: dict, cluster: list[dict]) -> str | None:
+    """
+    Rule 5: Reject stock greeting card images.
+
+    These are stock images used for creating greeting cards, characterized by
+    3-digit filenames (like 024.jpg) in Thumbnails paths.
+
+    Returns rejection reason string, or None if rule doesn't apply.
+    """
+    if is_stock_image(photo["original_path"]):
+        return "stock_image"
+
+    return None
+
+
 def check_rejection_rules(photo: dict, cluster: list[dict]) -> str | None:
     """
     Check all rejection rules for a photo.
@@ -211,6 +247,10 @@ def check_rejection_rules(photo: dict, cluster: list[dict]) -> str | None:
         return reason
 
     reason = check_face_thumbnail_rule(photo, cluster)
+    if reason:
+        return reason
+
+    reason = check_stock_image_rule(photo, cluster)
     if reason:
         return reason
 
