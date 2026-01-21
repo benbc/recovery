@@ -16,6 +16,8 @@ Rejection rules:
    version exists in Photos Library in the same filename cluster
 3. PHOTOBOOTH_FILTERED: Photo is from Photo Booth Pictures/ folder
    (these have filters applied)
+4. FACE_THUMBNAIL: Photo is a face detection crop (modelresources/ path,
+   small <=500px, and square)
 """
 
 import re
@@ -60,6 +62,11 @@ def is_iphoto_library(path: str) -> bool:
 def is_photobooth_pictures(path: str) -> bool:
     """Check if path is a filtered Photo Booth photo (Pictures subfolder)."""
     return "photo booth library/pictures/" in path.lower()
+
+
+def is_modelresources_path(path: str) -> bool:
+    """Check if path is in modelresources (face detection area)."""
+    return "/modelresources/" in path.lower()
 
 
 # -----------------------------------------------------------------------------
@@ -154,6 +161,36 @@ def check_photobooth_filtered_rule(photo: dict, cluster: list[dict]) -> str | No
     return None
 
 
+def check_face_thumbnail_rule(photo: dict, cluster: list[dict]) -> str | None:
+    """
+    Rule 4: Reject face detection thumbnails.
+
+    Photos/iPhoto stores face crops in modelresources/ for face recognition.
+    These are small square crops. We check for:
+    - modelresources path
+    - small (max dimension <= 500px)
+    - square (aspect ratio within 10% of 1:1)
+
+    Returns rejection reason string, or None if rule doesn't apply.
+    """
+    if not is_modelresources_path(photo["original_path"]):
+        return None
+
+    width = photo["width"]
+    height = photo["height"]
+
+    # Must be small (max dimension <= 500)
+    if max(width, height) > 500:
+        return None
+
+    # Must be roughly square (within 10%)
+    aspect_ratio = width / height if height > 0 else 0
+    if abs(aspect_ratio - 1.0) > 0.1:
+        return None
+
+    return "face_thumbnail"
+
+
 def check_rejection_rules(photo: dict, cluster: list[dict]) -> str | None:
     """
     Check all rejection rules for a photo.
@@ -170,6 +207,10 @@ def check_rejection_rules(photo: dict, cluster: list[dict]) -> str | None:
         return reason
 
     reason = check_photobooth_filtered_rule(photo, cluster)
+    if reason:
+        return reason
+
+    reason = check_face_thumbnail_rule(photo, cluster)
     if reason:
         return reason
 
