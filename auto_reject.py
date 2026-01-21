@@ -77,8 +77,11 @@ def extract_base_filename(path: str) -> str:
     # Remove thumbnail prefix
     filename = re.sub(r"^thumb_", "", filename, flags=re.IGNORECASE)
 
-    # Remove resolution suffix (e.g., _1024)
-    filename = re.sub(r"_\d+$", "", filename)
+    # Remove !cid_ prefix (email attachment extracts)
+    filename = re.sub(r"^!cid_", "", filename, flags=re.IGNORECASE)
+
+    # Remove known resolution suffix (_1024 is the only common one)
+    filename = re.sub(r"_1024$", "", filename)
 
     return filename.upper()  # Normalize case
 
