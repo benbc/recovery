@@ -206,6 +206,46 @@ def serve_image(filepath):
     return send_file(image_path)
 
 
+# Undo stack: list of (group_id, [rejected_photo_ids])
+# Kept in memory - survives page reloads but not server restarts
+undo_stack = []
+MAX_UNDO_STACK = 50
+
+
+def get_next_review_group(conn, after_group_id=None):
+    """Get the next group needing review, optionally after a specific group."""
+    cursor = conn.execute("""
+        SELECT group_id FROM (
+            SELECT group_id, COUNT(*) as cnt
+            FROM duplicate_groups
+            WHERE rejected = 0
+            GROUP BY group_id
+            HAVING cnt >= 2
+        )
+        ORDER BY group_id
+    """)
+    review_groups = [row['group_id'] for row in cursor.fetchall()]
+
+    if not review_groups:
+        return None
+
+    if after_group_id is None:
+        return review_groups[0]
+
+    try:
+        idx = review_groups.index(after_group_id)
+        if idx < len(review_groups) - 1:
+            return review_groups[idx + 1]
+        return None  # Was the last group
+    except ValueError:
+        # after_group_id not in list (was just resolved), return first
+        # Find first group > after_group_id
+        for gid in review_groups:
+            if gid > after_group_id:
+                return gid
+        return None
+
+
 @app.route('/api/reject', methods=['POST'])
 def reject_photos():
     """Mark non-selected photos as rejected."""
@@ -216,23 +256,82 @@ def reject_photos():
     if not group_id:
         return jsonify({'error': 'Missing group_id'}), 400
 
-    if not keep_ids:
-        return jsonify({'error': 'Must keep at least one photo'}), 400
+    conn = get_db()
+
+    # Get all non-rejected photo_ids in this group
+    cursor = conn.execute("""
+        SELECT photo_id FROM duplicate_groups
+        WHERE group_id = ? AND rejected = 0
+    """, [group_id])
+    group_photo_ids = set(row['photo_id'] for row in cursor.fetchall())
+
+    if not group_photo_ids:
+        conn.close()
+        return jsonify({'error': 'No photos to process in this group'}), 400
+
+    # Validate keep_ids all belong to this group
+    keep_ids_set = set(keep_ids)
+    invalid_ids = keep_ids_set - group_photo_ids
+    if invalid_ids:
+        conn.close()
+        return jsonify({'error': f'Invalid photo IDs for this group: {list(invalid_ids)[:5]}'}), 400
+
+    # Compute which photos will be rejected
+    reject_ids = list(group_photo_ids - keep_ids_set)
+
+    if reject_ids:
+        # Store in undo stack before making changes
+        undo_stack.append((group_id, reject_ids))
+        if len(undo_stack) > MAX_UNDO_STACK:
+            undo_stack.pop(0)
+
+        # Reject the photos
+        placeholders = ','.join('?' * len(reject_ids))
+        conn.execute(f"""
+            UPDATE duplicate_groups
+            SET rejected = 1
+            WHERE photo_id IN ({placeholders})
+        """, reject_ids)
+        conn.commit()
+
+    # Get next group needing review
+    next_group = get_next_review_group(conn, group_id)
+
+    conn.close()
+
+    return jsonify({
+        'success': True,
+        'rejected_count': len(reject_ids),
+        'next_group': next_group
+    })
+
+
+@app.route('/api/undo', methods=['POST'])
+def undo_last():
+    """Undo the last rejection action."""
+    if not undo_stack:
+        return jsonify({'error': 'Nothing to undo'}), 400
+
+    group_id, rejected_ids = undo_stack.pop()
 
     conn = get_db()
 
-    # Mark photos NOT in keep_ids as rejected
-    placeholders = ','.join('?' * len(keep_ids))
+    # Restore the rejected photos
+    placeholders = ','.join('?' * len(rejected_ids))
     conn.execute(f"""
         UPDATE duplicate_groups
-        SET rejected = 1
-        WHERE group_id = ? AND rejected = 0 AND photo_id NOT IN ({placeholders})
-    """, [group_id] + keep_ids)
-
+        SET rejected = 0
+        WHERE photo_id IN ({placeholders})
+    """, rejected_ids)
     conn.commit()
     conn.close()
 
-    return jsonify({'success': True})
+    return jsonify({
+        'success': True,
+        'restored_count': len(rejected_ids),
+        'group_id': group_id,
+        'undo_remaining': len(undo_stack)
+    })
 
 
 @app.route('/api/stats')
