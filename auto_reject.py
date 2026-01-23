@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = '>=3.13'
-# dependencies = []
+# dependencies = ['pillow']
 # ///
 """
 Auto-resolve duplicate groups by rejecting obvious derivatives.
@@ -20,12 +20,16 @@ Rejection rules:
    small <=500px, and square)
 5. STOCK_IMAGE: Photo is a stock greeting card image (in Thumbnails path
    with 3-digit filename like 024.jpg)
+6. PIXEL_DUPLICATE: Photo is pixel-identical to another and has a
+   camera-generated name while the other has a human-assigned name
 """
 
 import re
 import sqlite3
 from collections import defaultdict
 from pathlib import Path
+
+from PIL import Image
 
 DB_PATH = Path("organized/photos.db")
 
@@ -88,6 +92,34 @@ def is_stock_image(path: str) -> bool:
 
     # Check if it's exactly 3 digits
     return bool(re.match(r"^\d{3}$", filename))
+
+
+def is_camera_generated_name(filename: str) -> bool:
+    """Check if filename looks like a camera-generated name."""
+    stem = Path(filename).stem.upper()
+    # Common camera patterns: IMG_XXXX, DSC_XXXX, DSCN_XXXX, 20080510_0015, P1010001
+    patterns = [
+        r"^IMG_\d+$",
+        r"^DSC_?\d+$",
+        r"^DSCN?\d+$",
+        r"^P\d{7}$",
+        r"^\d{8}_\d+$",  # YYYYMMDD_XXXX
+    ]
+    return any(re.match(p, stem) for p in patterns)
+
+
+def pixels_identical(path1: str, path2: str) -> bool:
+    """Check if two images have identical pixel data."""
+    try:
+        img1 = Image.open(path1)
+        img2 = Image.open(path2)
+
+        if img1.size != img2.size or img1.mode != img2.mode:
+            return False
+
+        return img1.tobytes() == img2.tobytes()
+    except Exception:
+        return False
 
 
 # -----------------------------------------------------------------------------
@@ -227,6 +259,37 @@ def check_stock_image_rule(photo: dict, cluster: list[dict]) -> str | None:
     return None
 
 
+def check_pixel_duplicate_rule(photo: dict, cluster: list[dict]) -> str | None:
+    """
+    Rule 6: Reject if pixel-identical to another photo with a better name.
+
+    Rejects this photo if:
+    - This photo has a camera-generated name (IMG_XXXX, etc.)
+    - Another photo in cluster has same file size, identical pixels, and human-assigned name
+
+    Returns rejection reason string, or None if rule doesn't apply.
+    """
+    my_name = Path(photo["original_path"]).name
+    if not is_camera_generated_name(my_name):
+        return None  # This photo has a human name, keep it
+
+    for other in cluster:
+        if other["photo_id"] == photo["photo_id"]:
+            continue
+        if other["file_size"] != photo["file_size"]:
+            continue  # Different size, can't be pixel-identical
+
+        other_name = Path(other["original_path"]).name
+        if is_camera_generated_name(other_name):
+            continue  # Other also has camera name, ambiguous
+
+        # Other has human name and same file size - check pixels
+        if pixels_identical(photo["original_path"], other["original_path"]):
+            return "pixel_duplicate"
+
+    return None
+
+
 def check_rejection_rules(photo: dict, cluster: list[dict]) -> str | None:
     """
     Check all rejection rules for a photo.
@@ -251,6 +314,10 @@ def check_rejection_rules(photo: dict, cluster: list[dict]) -> str | None:
         return reason
 
     reason = check_stock_image_rule(photo, cluster)
+    if reason:
+        return reason
+
+    reason = check_pixel_duplicate_rule(photo, cluster)
     if reason:
         return reason
 

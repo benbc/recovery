@@ -127,10 +127,17 @@
         color: #0066cc;
     }
     .filename {
-        font-size: 11px;
-        color: #999;
+        font-size: 13px;
+        color: #333;
+        font-weight: 600;
         word-break: break-all;
         margin-top: 5px;
+    }
+    .filepath {
+        font-size: 10px;
+        color: #999;
+        word-break: break-all;
+        margin-top: 3px;
     }
 </style>
 {% endblock %}
@@ -190,7 +197,8 @@
             <div class="quality-bar">
                 <div class="quality-fill" style="width: {{ [photo['quality_score'] / photos[0]['quality_score'] * 100, 100]|min }}%"></div>
             </div>
-            <div class="filename">{{ photo['original_path'].split('/')[-1] }}</div>
+            <div class="filename" title="{{ photo['original_path'] }}">{{ photo['original_path'].split('/')[-1] }}</div>
+            <div class="filepath">{{ photo['original_path'] }}</div>
         </div>
     </div>
     {% endfor %}
