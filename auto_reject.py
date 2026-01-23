@@ -22,6 +22,8 @@ Rejection rules:
    with 3-digit filename like 024.jpg)
 6. PIXEL_DUPLICATE: Photo is pixel-identical to another and has a
    camera-generated name while the other has a human-assigned name
+7. PREVIEW_WITH_ORIGINAL: Photo is in a Previews path and a larger file
+   with the same filename exists in the cluster
 """
 
 import re
@@ -92,6 +94,11 @@ def is_stock_image(path: str) -> bool:
 
     # Check if it's exactly 3 digits
     return bool(re.match(r"^\d{3}$", filename))
+
+
+def is_previews_path(path: str) -> bool:
+    """Check if path is in a Previews folder (iPhoto/Photos lower-quality versions)."""
+    return "/previews/" in path.lower()
 
 
 def is_camera_generated_name(filename: str) -> bool:
@@ -259,6 +266,36 @@ def check_stock_image_rule(photo: dict, cluster: list[dict]) -> str | None:
     return None
 
 
+def check_preview_with_original_rule(photo: dict, cluster: list[dict]) -> str | None:
+    """
+    Rule 7: Reject preview versions when a larger original exists.
+
+    Rejects this photo if:
+    - This photo is in a Previews path
+    - Another photo in cluster has the same filename but larger file size
+
+    Returns rejection reason string, or None if rule doesn't apply.
+    """
+    if not is_previews_path(photo["original_path"]):
+        return None
+
+    my_filename = Path(photo["original_path"]).name.lower()
+    my_size = photo["file_size"]
+
+    for other in cluster:
+        if other["photo_id"] == photo["photo_id"]:
+            continue
+
+        other_filename = Path(other["original_path"]).name.lower()
+        if other_filename != my_filename:
+            continue
+
+        if other["file_size"] > my_size:
+            return "preview_with_original"
+
+    return None
+
+
 def check_pixel_duplicate_rule(photo: dict, cluster: list[dict]) -> str | None:
     """
     Rule 6: Reject if pixel-identical to another photo with a better name.
@@ -314,6 +351,10 @@ def check_rejection_rules(photo: dict, cluster: list[dict]) -> str | None:
         return reason
 
     reason = check_stock_image_rule(photo, cluster)
+    if reason:
+        return reason
+
+    reason = check_preview_with_original_rule(photo, cluster)
     if reason:
         return reason
 
