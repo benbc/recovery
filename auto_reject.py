@@ -24,6 +24,11 @@ Rejection rules:
    camera-generated name while the other has a human-assigned name
 7. PREVIEW_WITH_ORIGINAL: Photo is in a Previews path and a larger file
    with the same filename exists in the cluster
+8. FLAG_ICON: Photo is from the known flag icons folder (20121223-175144)
+9. SMALLER_THUMBNAIL: Photo is a thumbnail and a larger thumbnail exists
+   in the cluster (when no original exists)
+10. TINY_WITH_LARGE: Photo is tiny (<0.5MP) and a much larger version
+    (>10x resolution) exists in the cluster
 """
 
 import re
@@ -266,6 +271,79 @@ def check_stock_image_rule(photo: dict, cluster: list[dict]) -> str | None:
     return None
 
 
+def check_flag_icon_rule(photo: dict, cluster: list[dict]) -> str | None:
+    """
+    Rule 8: Reject flag icons from the known flags folder.
+
+    These are country flag icons imported into iPhoto, not real photos.
+
+    Returns rejection reason string, or None if rule doesn't apply.
+    """
+    if "20121223-175144" in photo["original_path"]:
+        return "flag_icon"
+    return None
+
+
+def check_smaller_thumbnail_rule(photo: dict, cluster: list[dict]) -> str | None:
+    """
+    Rule 9: Reject smaller thumbnails when a larger thumbnail exists (no original).
+
+    When all photos in a cluster are thumbnails (original was lost), keep only
+    the largest one.
+
+    Returns rejection reason string, or None if rule doesn't apply.
+    """
+    if not is_thumbnail(photo["original_path"]):
+        return None
+
+    # Check if any non-thumbnail exists in cluster
+    has_non_thumbnail = any(
+        not is_thumbnail(other["original_path"])
+        for other in cluster
+        if other["photo_id"] != photo["photo_id"]
+    )
+    if has_non_thumbnail:
+        return None  # Rule 1 handles this case
+
+    # All are thumbnails - reject if a larger one exists
+    my_resolution = photo["width"] * photo["height"]
+    for other in cluster:
+        if other["photo_id"] == photo["photo_id"]:
+            continue
+        other_resolution = other["width"] * other["height"]
+        if other_resolution > my_resolution:
+            return "smaller_thumbnail"
+
+    return None
+
+
+def check_tiny_with_large_rule(photo: dict, cluster: list[dict]) -> str | None:
+    """
+    Rule 10: Reject tiny photos when a much larger version exists.
+
+    Catches thumbnails that aren't marked as such (no /Thumbnails/ path or
+    thumb_ prefix). Rejects if:
+    - This photo is tiny (< 0.5 megapixels)
+    - Another photo in cluster is much larger (> 10x the resolution)
+
+    Returns rejection reason string, or None if rule doesn't apply.
+    """
+    my_resolution = photo["width"] * photo["height"]
+
+    # Only apply to tiny photos (< 0.5 MP = 500,000 pixels)
+    if my_resolution >= 500_000:
+        return None
+
+    for other in cluster:
+        if other["photo_id"] == photo["photo_id"]:
+            continue
+        other_resolution = other["width"] * other["height"]
+        if other_resolution > my_resolution * 10:
+            return "tiny_with_large"
+
+    return None
+
+
 def check_preview_with_original_rule(photo: dict, cluster: list[dict]) -> str | None:
     """
     Rule 7: Reject preview versions when a larger original exists.
@@ -351,6 +429,18 @@ def check_rejection_rules(photo: dict, cluster: list[dict]) -> str | None:
         return reason
 
     reason = check_stock_image_rule(photo, cluster)
+    if reason:
+        return reason
+
+    reason = check_flag_icon_rule(photo, cluster)
+    if reason:
+        return reason
+
+    reason = check_smaller_thumbnail_rule(photo, cluster)
+    if reason:
+        return reason
+
+    reason = check_tiny_with_large_rule(photo, cluster)
     if reason:
         return reason
 
