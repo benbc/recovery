@@ -190,6 +190,7 @@ def group_detail(group_id):
     photos = cursor.fetchall()
 
     # Get navigation info (prev/next group needing review)
+    # Order matches /groups page: largest groups first, then by group_id
     cursor = conn.execute("""
         SELECT group_id FROM (
             SELECT group_id, COUNT(*) as cnt
@@ -199,7 +200,7 @@ def group_detail(group_id):
             GROUP BY group_id
             HAVING cnt >= 2
         )
-        ORDER BY group_id
+        ORDER BY cnt DESC, group_id
     """)
     review_groups = [row['group_id'] for row in cursor.fetchall()]
 
@@ -245,8 +246,9 @@ MAX_UNDO_STACK = 50
 
 def get_next_review_group(conn, after_group_id=None):
     """Get the next group needing review, optionally after a specific group."""
+    # Order matches /groups page: largest groups first, then by group_id
     cursor = conn.execute("""
-        SELECT group_id FROM (
+        SELECT group_id, cnt FROM (
             SELECT group_id, COUNT(*) as cnt
             FROM duplicate_groups
             WHERE rejected = 0
@@ -254,7 +256,7 @@ def get_next_review_group(conn, after_group_id=None):
             GROUP BY group_id
             HAVING cnt >= 2
         )
-        ORDER BY group_id
+        ORDER BY cnt DESC, group_id
     """)
     review_groups = [row['group_id'] for row in cursor.fetchall()]
 
@@ -270,12 +272,9 @@ def get_next_review_group(conn, after_group_id=None):
             return review_groups[idx + 1]
         return None  # Was the last group
     except ValueError:
-        # after_group_id not in list (was just resolved), return first
-        # Find first group > after_group_id
-        for gid in review_groups:
-            if gid > after_group_id:
-                return gid
-        return None
+        # after_group_id not in list (was just resolved)
+        # Return first group in the ordered list
+        return review_groups[0] if review_groups else None
 
 
 @app.route('/api/reject', methods=['POST'])
@@ -289,6 +288,9 @@ def reject_photos():
         return jsonify({'error': 'Missing group_id'}), 400
 
     conn = get_db()
+
+    # Get next group BEFORE making changes (while current group is still in list)
+    next_group = get_next_review_group(conn, group_id)
 
     # Get all non-rejected photo_ids in this group
     cursor = conn.execute("""
@@ -326,9 +328,6 @@ def reject_photos():
         """, reject_ids)
         conn.commit()
 
-    # Get next group needing review
-    next_group = get_next_review_group(conn, group_id)
-
     conn.close()
 
     return jsonify({
@@ -349,6 +348,9 @@ def mark_reviewed():
 
     conn = get_db()
 
+    # Get next group BEFORE making changes (while current group is still in list)
+    next_group = get_next_review_group(conn, group_id)
+
     # Store in undo stack
     undo_stack.append(('review', group_id, None))
     if len(undo_stack) > MAX_UNDO_STACK:
@@ -359,9 +361,6 @@ def mark_reviewed():
         INSERT OR IGNORE INTO reviewed_groups (group_id) VALUES (?)
     """, [group_id])
     conn.commit()
-
-    # Get next group needing review
-    next_group = get_next_review_group(conn, group_id)
 
     conn.close()
 
