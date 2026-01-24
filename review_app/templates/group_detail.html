@@ -2,6 +2,12 @@
 
 {% block title %}Group {{ group_id }} - Review{% endblock %}
 
+{% block header_stats %}
+<span style="font-size: 14px; font-weight: normal; color: #666; margin-left: 20px;">
+    {{ non_rejected_count|number_format }} photos &middot; {{ total_groups|number_format }} groups remaining
+</span>
+{% endblock %}
+
 {% block extra_css %}
 <style>
     .top-bar {
@@ -69,7 +75,7 @@
     }
     .photo-img {
         width: 100%;
-        height: 160px;
+        height: 280px;
         object-fit: contain;
         background: #f9f9f9;
     }
@@ -124,6 +130,7 @@
     <div class="button-group">
         <button class="btn btn-secondary" onclick="selectAll()">Select All</button>
         <button class="btn btn-secondary" onclick="selectNone()">Select None</button>
+        <button class="btn btn-secondary" onclick="keepAllAndContinue()"><span class="kbd">A</span>Keep All</button>
         <button class="btn btn-danger" onclick="rejectAllAndContinue()"><span class="kbd">R</span>Reject All</button>
         <button class="btn" onclick="saveSelection()"><span class="kbd">K</span>Keep Selected</button>
         <button class="btn btn-secondary" onclick="skipGroup()"><span class="kbd">S</span>Skip</button>
@@ -283,6 +290,27 @@ function skipGroup() {
     {% endif %}
 }
 
+function keepAllAndContinue() {
+    const groupId = {{ group_id }};
+
+    fetch('/api/review', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({group_id: groupId})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            navigateAfterAction(data);
+        } else if (data.error) {
+            alert('Error: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('Error marking as reviewed: ' + error);
+    });
+}
+
 // Keyboard shortcuts (single keys only, no default overrides)
 document.addEventListener('keydown', (e) => {
     // Ignore if typing in an input
@@ -294,6 +322,8 @@ document.addEventListener('keydown', (e) => {
         saveSelection();
     } else if (e.key === 's' || e.key === 'S') {
         skipGroup();
+    } else if (e.key === 'a' || e.key === 'A') {
+        keepAllAndContinue();
     } else if (e.key === 'u' || e.key === 'U') {
         undo();
     } else if (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' ||

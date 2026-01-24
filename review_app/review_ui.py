@@ -36,6 +36,21 @@ def get_db():
     return conn
 
 
+def ensure_schema(conn):
+    """Ensure reviewed_groups table exists."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reviewed_groups (
+            group_id INTEGER PRIMARY KEY
+        )
+    """)
+    conn.commit()
+
+
+# Ensure schema on startup
+with sqlite3.connect(DB_PATH) as _conn:
+    ensure_schema(_conn)
+
+
 @app.route('/')
 def index():
     """Main page - show overview."""
@@ -53,12 +68,13 @@ def index():
     """)
     rejected_count = cursor.fetchone()['rejected']
 
-    # Groups needing review (2+ non-rejected photos)
+    # Groups needing review (2+ non-rejected photos, not already reviewed)
     cursor = conn.execute("""
         SELECT COUNT(*) as count FROM (
             SELECT group_id
             FROM duplicate_groups
             WHERE rejected = 0
+              AND group_id NOT IN (SELECT group_id FROM reviewed_groups)
             GROUP BY group_id
             HAVING COUNT(*) >= 2
         )
@@ -71,6 +87,7 @@ def index():
             SELECT COUNT(*) as cnt
             FROM duplicate_groups
             WHERE rejected = 0
+              AND group_id NOT IN (SELECT group_id FROM reviewed_groups)
             GROUP BY group_id
             HAVING COUNT(*) >= 2
         )
@@ -78,7 +95,7 @@ def index():
     row = cursor.fetchone()
     photos_needing_review = row['total'] if row['total'] else 0
 
-    # Resolved groups (1 non-rejected photo remaining)
+    # Resolved groups (1 non-rejected photo remaining, or marked as reviewed)
     cursor = conn.execute("""
         SELECT COUNT(*) as count FROM (
             SELECT group_id
@@ -86,17 +103,19 @@ def index():
             WHERE rejected = 0
             GROUP BY group_id
             HAVING COUNT(*) = 1
+               OR group_id IN (SELECT group_id FROM reviewed_groups)
         )
     """)
     resolved_groups = cursor.fetchone()['count']
 
-    # Group size distribution (non-rejected photos only, excluding single-photo groups)
+    # Group size distribution (non-rejected photos only, excluding single-photo and reviewed groups)
     cursor = conn.execute("""
         SELECT remaining_photos, COUNT(*) as count
         FROM (
             SELECT group_id, COUNT(*) as remaining_photos
             FROM duplicate_groups
             WHERE rejected = 0
+              AND group_id NOT IN (SELECT group_id FROM reviewed_groups)
             GROUP BY group_id
             HAVING COUNT(*) >= 2
         )
@@ -118,7 +137,7 @@ def index():
 
 @app.route('/groups')
 def groups():
-    """List groups needing review (2+ non-rejected photos)."""
+    """List groups needing review (2+ non-rejected photos, not reviewed)."""
     conn = get_db()
 
     cursor = conn.execute("""
@@ -130,6 +149,7 @@ def groups():
             SELECT group_id, COUNT(*) as remaining_photos
             FROM duplicate_groups
             WHERE rejected = 0
+              AND group_id NOT IN (SELECT group_id FROM reviewed_groups)
             GROUP BY group_id
             HAVING COUNT(*) >= 2
         ) g
@@ -175,6 +195,7 @@ def group_detail(group_id):
             SELECT group_id, COUNT(*) as cnt
             FROM duplicate_groups
             WHERE rejected = 0
+              AND group_id NOT IN (SELECT group_id FROM reviewed_groups)
             GROUP BY group_id
             HAVING cnt >= 2
         )
@@ -186,6 +207,12 @@ def group_detail(group_id):
     prev_group = review_groups[current_idx - 1] if current_idx > 0 else None
     next_group = review_groups[current_idx + 1] if current_idx < len(review_groups) - 1 else None
 
+    # Get totals for header
+    cursor = conn.execute("""
+        SELECT COUNT(*) as count FROM duplicate_groups WHERE rejected = 0
+    """)
+    non_rejected_count = cursor.fetchone()['count']
+
     conn.close()
 
     return render_template('group_detail.html',
@@ -194,7 +221,8 @@ def group_detail(group_id):
                            prev_group=prev_group,
                            next_group=next_group,
                            current_idx=current_idx + 1,
-                           total_groups=len(review_groups))
+                           total_groups=len(review_groups),
+                           non_rejected_count=non_rejected_count)
 
 
 @app.route('/image/<path:filepath>')
@@ -206,7 +234,10 @@ def serve_image(filepath):
     return send_file(image_path)
 
 
-# Undo stack: list of (group_id, [rejected_photo_ids])
+# Undo stack: list of (action_type, group_id, data)
+# action_type is 'reject' or 'review'
+# For 'reject': data is [rejected_photo_ids]
+# For 'review': data is None
 # Kept in memory - survives page reloads but not server restarts
 undo_stack = []
 MAX_UNDO_STACK = 50
@@ -219,6 +250,7 @@ def get_next_review_group(conn, after_group_id=None):
             SELECT group_id, COUNT(*) as cnt
             FROM duplicate_groups
             WHERE rejected = 0
+              AND group_id NOT IN (SELECT group_id FROM reviewed_groups)
             GROUP BY group_id
             HAVING cnt >= 2
         )
@@ -281,7 +313,7 @@ def reject_photos():
 
     if reject_ids:
         # Store in undo stack before making changes
-        undo_stack.append((group_id, reject_ids))
+        undo_stack.append(('reject', group_id, reject_ids))
         if len(undo_stack) > MAX_UNDO_STACK:
             undo_stack.pop(0)
 
@@ -306,29 +338,69 @@ def reject_photos():
     })
 
 
-@app.route('/api/undo', methods=['POST'])
-def undo_last():
-    """Undo the last rejection action."""
-    if not undo_stack:
-        return jsonify({'error': 'Nothing to undo'}), 400
+@app.route('/api/review', methods=['POST'])
+def mark_reviewed():
+    """Mark a group as reviewed (keeping all photos)."""
+    data = request.json
+    group_id = data.get('group_id')
 
-    group_id, rejected_ids = undo_stack.pop()
+    if not group_id:
+        return jsonify({'error': 'Missing group_id'}), 400
 
     conn = get_db()
 
-    # Restore the rejected photos
-    placeholders = ','.join('?' * len(rejected_ids))
-    conn.execute(f"""
-        UPDATE duplicate_groups
-        SET rejected = 0
-        WHERE photo_id IN ({placeholders})
-    """, rejected_ids)
+    # Store in undo stack
+    undo_stack.append(('review', group_id, None))
+    if len(undo_stack) > MAX_UNDO_STACK:
+        undo_stack.pop(0)
+
+    # Mark group as reviewed
+    conn.execute("""
+        INSERT OR IGNORE INTO reviewed_groups (group_id) VALUES (?)
+    """, [group_id])
+    conn.commit()
+
+    # Get next group needing review
+    next_group = get_next_review_group(conn, group_id)
+
+    conn.close()
+
+    return jsonify({
+        'success': True,
+        'next_group': next_group
+    })
+
+
+@app.route('/api/undo', methods=['POST'])
+def undo_last():
+    """Undo the last action."""
+    if not undo_stack:
+        return jsonify({'error': 'Nothing to undo'}), 400
+
+    action_type, group_id, data = undo_stack.pop()
+
+    conn = get_db()
+
+    if action_type == 'reject':
+        # Restore the rejected photos
+        rejected_ids = data
+        placeholders = ','.join('?' * len(rejected_ids))
+        conn.execute(f"""
+            UPDATE duplicate_groups
+            SET rejected = 0
+            WHERE photo_id IN ({placeholders})
+        """, rejected_ids)
+    elif action_type == 'review':
+        # Remove from reviewed_groups
+        conn.execute("""
+            DELETE FROM reviewed_groups WHERE group_id = ?
+        """, [group_id])
+
     conn.commit()
     conn.close()
 
     return jsonify({
         'success': True,
-        'restored_count': len(rejected_ids),
         'group_id': group_id,
         'undo_remaining': len(undo_stack)
     })
@@ -352,6 +424,7 @@ def api_stats():
             SELECT group_id
             FROM duplicate_groups
             WHERE rejected = 0
+              AND group_id NOT IN (SELECT group_id FROM reviewed_groups)
             GROUP BY group_id
             HAVING COUNT(*) >= 2
         )
