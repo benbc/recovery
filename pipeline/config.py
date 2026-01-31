@@ -15,7 +15,7 @@ DB_PATH = OUTPUT_ROOT / "photos.db"
 EXPORT_DIR = OUTPUT_ROOT / "exported"
 
 # Old database path (for importing hashes from previous pipeline)
-OLD_DB_PATH = Path("/home/ben/src/benbc/recovery/organized/photos.db")
+OLD_DB_PATH = Path("/home/ben/src/benbc/recovery/archive/organized/photos.db")
 
 # Perceptual hash hamming distance threshold for grouping
 # Distances are even numbers (0, 2, 4, 6, 8, 10, 12...)
