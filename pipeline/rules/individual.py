@@ -200,7 +200,7 @@ def rule_system_cache(photo: dict) -> Optional[tuple[str, str]]:
         "/temp/",
         "/.Trash/",
         "/Trash/",
-        "/FlipShare Data/Previews/",
+        # Note: FlipShare handled by rule_flip_video_thumb
         "/My Flip Video Prefs/",
     ]
     for pattern in cache_patterns:
@@ -237,15 +237,18 @@ def rule_father_in_law(photo: dict) -> Optional[tuple[str, str]]:
     return None
 
 
-def rule_photobooth_original(photo: dict) -> Optional[tuple[str, str]]:
+def rule_photobooth(photo: dict) -> Optional[tuple[str, str]]:
     """
-    PHOTOBOOTH_ORIGINAL: Separate Photo Booth originals for manual curation.
+    PHOTOBOOTH: Separate all Photo Booth photos for manual curation.
 
-    Condition: path matches 'Photo Booth Library/Originals/'
-    Rationale: Need manual review to select best shots
+    Condition: path matches 'Photo Booth Library/Originals/' or 'Photo Booth Library/Pictures/'
+    Rationale: Need manual review to select best shots; separating both
+               means they won't be grouped with non-Photo Booth photos
     """
     if _any_path_matches(photo, "Photo Booth Library/Originals/"):
-        return ("separate", "PHOTOBOOTH_ORIGINAL")
+        return ("separate", "PHOTOBOOTH")
+    if _any_path_matches(photo, "Photo Booth Library/Pictures/"):
+        return ("separate", "PHOTOBOOTH")
     return None
 
 
@@ -270,7 +273,7 @@ REJECTION_RULES: list[RuleFunc] = [
 # Separation rules - applied in order, first match wins
 SEPARATION_RULES: list[RuleFunc] = [
     rule_father_in_law,
-    rule_photobooth_original,
+    rule_photobooth,
 ]
 
 # All individual rules

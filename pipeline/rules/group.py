@@ -76,16 +76,6 @@ def _is_photos_library(path: str) -> bool:
     return ".photoslibrary/" in path.lower()
 
 
-def _is_photobooth_pictures(path: str) -> bool:
-    """Check if path is a filtered Photo Booth photo (Pictures subfolder)."""
-    return "photo booth library/pictures/" in path.lower()
-
-
-def _is_photobooth_originals(path: str) -> bool:
-    """Check if path is an original Photo Booth photo (Originals subfolder)."""
-    return "photo booth library/originals/" in path.lower()
-
-
 def _is_camera_generated_name(filename: str) -> bool:
     """Check if filename looks like a camera-generated name."""
     stem = Path(filename).stem.upper()
@@ -157,8 +147,13 @@ def rule_thumbnail(group: list[dict]) -> list[tuple[str, str, str]]:
     """
     THUMBNAIL: Reject smaller thumbnail when larger non-thumbnail exists.
 
-    Uses hamming distance as confidence: close = definitely same photo.
-    Only rejects thumbnails when a "master" exists to keep.
+    For each thumbnail, finds a master that is BOTH:
+    1. Higher resolution than the thumbnail
+    2. Low hamming distance (very similar) to this specific thumbnail
+
+    This handles groups with multiple unrelated photos correctly.
+
+    TODO: Hamming threshold (currently 4) needs tuning with visual examples.
     """
     rejections = []
 
@@ -169,25 +164,43 @@ def rule_thumbnail(group: list[dict]) -> list[tuple[str, str, str]]:
     if not thumbnails or not masters:
         return []
 
-    # Sort masters by resolution (highest first)
-    masters.sort(key=lambda p: _resolution(p), reverse=True)
-    best_master = masters[0]
-
+    # For each thumbnail, find its best matching master
     for thumb in thumbnails:
         thumb_res = _resolution(thumb)
-        master_res = _resolution(best_master)
+        thumb_hash = thumb.get("perceptual_hash")
 
-        # Only reject if master is actually larger
-        if master_res > thumb_res:
-            # Check hamming distance for confidence
-            if thumb.get("perceptual_hash") and best_master.get("perceptual_hash"):
-                dist = hamming_distance(
-                    thumb["perceptual_hash"],
-                    best_master["perceptual_hash"]
-                )
-                # Only reject if very similar (hamming <= 4)
-                if dist <= 4:
-                    rejections.append((thumb["id"], best_master["id"], "THUMBNAIL"))
+        if not thumb_hash:
+            continue
+
+        # Find the master most similar to this thumbnail (lowest hamming distance)
+        best_master = None
+        best_dist = float("inf")
+        best_master_res = 0
+
+        for master in masters:
+            master_res = _resolution(master)
+            master_hash = master.get("perceptual_hash")
+
+            if not master_hash:
+                continue
+
+            # Must be larger
+            if master_res <= thumb_res:
+                continue
+
+            # Must be similar (low hamming distance)
+            dist = hamming_distance(thumb_hash, master_hash)
+            if dist > 4:  # TODO: tune this threshold
+                continue
+
+            # Prefer lowest hamming distance, then highest resolution as tiebreaker
+            if dist < best_dist or (dist == best_dist and master_res > best_master_res):
+                best_master = master
+                best_dist = dist
+                best_master_res = master_res
+
+        if best_master:
+            rejections.append((thumb["id"], best_master["id"], "THUMBNAIL"))
 
     return rejections
 
@@ -263,33 +276,8 @@ def rule_iphoto_copy(group: list[dict]) -> list[tuple[str, str, str]]:
     return rejections
 
 
-def rule_photobooth_filtered(group: list[dict]) -> list[tuple[str, str, str]]:
-    """
-    PHOTOBOOTH_FILTERED: Reject filtered Photo Booth versions when original exists.
-
-    Photo Booth stores originals in /Originals/ and filtered in /Pictures/.
-    """
-    rejections = []
-
-    filtered = []
-    originals = []
-
-    for photo in group:
-        paths = _get_paths(photo)
-        if any(_is_photobooth_pictures(p) for p in paths):
-            filtered.append(photo)
-        if any(_is_photobooth_originals(p) for p in paths):
-            originals.append(photo)
-
-    if not filtered or not originals:
-        return []
-
-    # Reject all filtered versions when any original exists
-    best_original = max(originals, key=_rank_photo)
-    for photo in filtered:
-        rejections.append((photo["id"], best_original["id"], "PHOTOBOOTH_FILTERED"))
-
-    return rejections
+# NOTE: rule_photobooth_filtered removed - Photo Booth photos are now separated
+# in Stage 2 (individual rules) so they won't appear in duplicate groups.
 
 
 def rule_derivative(group: list[dict]) -> list[tuple[str, str, str]]:
@@ -389,7 +377,6 @@ GROUP_RULES: list[GroupRuleFunc] = [
     rule_thumbnail,
     rule_preview,
     rule_iphoto_copy,
-    rule_photobooth_filtered,
     rule_derivative,
     rule_generic_name,
 ]

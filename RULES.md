@@ -36,7 +36,7 @@ These rules examine a single photo in isolation. Each rule can produce one of tw
 | Rule Name | Condition | Rationale |
 |-----------|-----------|-----------|
 | `FATHER_IN_LAW` | path matches `/tor/Pictures/2013/03/03/` | Separate digitized collection needing different handling |
-| `PHOTOBOOTH_ORIGINAL` | path matches `Photo Booth Library/Originals/` | Needs manual curation to select best shots |
+| `PHOTOBOOTH` | path matches `Photo Booth Library/Originals/` or `Photo Booth Library/Pictures/` | Needs manual curation; separating both paths keeps them out of duplicate groups |
 
 ## Group Rules (Stage 5)
 
@@ -47,12 +47,13 @@ like resolution, file size, and hamming distance to determine which version to k
 
 | Rule Name | Condition | Rationale |
 |-----------|-----------|-----------|
-| `THUMBNAIL` | Smaller version when larger non-thumbnail exists, close hamming distance | Keep the original, discard thumbnail |
+| `THUMBNAIL` | Smaller version when larger non-thumbnail exists AND low hamming distance to that specific master | Keep the original, discard thumbnail |
 | `PREVIEW` | In `/Previews/` when larger file with same filename exists | Keep the original, discard preview |
 | `IPHOTO_COPY` | In `.photolibrary` when same resolution exists in `.photoslibrary` | Prefer newer Photos.app over older iPhoto |
-| `PHOTOBOOTH_FILTERED` | In Photo Booth `/Pictures/` when `/Originals/` version exists | Keep original, discard filtered version |
 | `DERIVATIVE` | Smaller resolution with hamming distance ≤2 to larger version | Keep the highest resolution version |
-| `GENERIC_NAME` | Camera-named (IMG_xxx) when human-named pixel-identical exists | Prefer the renamed version |
+| `GENERIC_NAME` | Camera-named (IMG_xxx) when human-named pixel-identical exists (hamming=0) | Prefer the renamed version |
+
+Note: `PHOTOBOOTH_FILTERED` was removed - Photo Booth photos are now separated in Stage 2.
 
 ## Hamming Distance Usage
 
@@ -106,6 +107,20 @@ def rule_thumbnail(group: list[dict]) -> list[tuple[str, str, str]]:
 - **FACE_CROP**: Current threshold is 500px; some 480×480 crops exist that may need adjustment
 - **FLAG_ICON**: Uses hardcoded folder name; may need expansion for other flag collections
 - **Directory coherence**: Consider using sibling file characteristics as evidence (build exploration tool first)
+
+## Rules Needing Verification/Tuning
+
+These rules have hamming distance thresholds that need verification with visual examples:
+
+| Rule | Current Threshold | Notes |
+|------|------------------|-------|
+| `THUMBNAIL` | hamming ≤ 4 | May need to be lower; needs examples |
+| `PREVIEW` | filename match only | May need hamming distance check like THUMBNAIL |
+| `IPHOTO_COPY` | resolution match only | May need hamming distance or name matching; needs examples |
+| `DERIVATIVE` | hamming ≤ 2 | Was previously identical hash; verify this is safe |
+| `GENERIC_NAME` | hamming = 0 | Strictest threshold; may be correct for pixel-identical |
+
+All thresholds should be tuned together with a visual sampling tool.
 
 ## Adding New Rules
 
