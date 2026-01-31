@@ -155,6 +155,12 @@ def extract_base_filename(path: str) -> str:
     # Remove known resolution suffix (_1024 is the only common one)
     filename = re.sub(r"_1024$", "", filename)
 
+    # Normalize iPhone edited photos: IMG_E1234 -> IMG_1234
+    filename = re.sub(r"^(IMG_)E(\d+)$", r"\1\2", filename, flags=re.IGNORECASE)
+
+    # Normalize spaces and dashes (iPhoto sometimes substitutes these)
+    filename = re.sub(r"[-_\s]+", " ", filename)
+
     return filename.upper()  # Normalize case
 
 
