@@ -1,0 +1,41 @@
+"""Pipeline configuration - paths, thresholds, and constants."""
+
+from pathlib import Path
+
+# Source directory containing archived computer contents
+SOURCE_ROOT = Path("/home/ben/photo-recovery")
+
+# Output directory for new pipeline (separate from old organized/)
+OUTPUT_ROOT = Path("/home/ben/src/benbc/recovery/output")
+
+# Database path
+DB_PATH = OUTPUT_ROOT / "photos.db"
+
+# Directory for exported photos
+EXPORT_DIR = OUTPUT_ROOT / "exported"
+
+# Old database path (for importing hashes from previous pipeline)
+OLD_DB_PATH = Path("/home/ben/src/benbc/recovery/organized/photos.db")
+
+# Perceptual hash hamming distance threshold for grouping
+# Distances are even numbers (0, 2, 4, 6, 8, 10, 12...)
+# Lower = stricter (fewer false positives), Higher = more inclusive
+HAMMING_THRESHOLD = 8
+
+# Image MIME types to process
+IMAGE_MIME_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/bmp",
+    "image/tiff",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+}
+
+# Files to always skip
+EXCLUDE_FILENAMES = {".DS_Store", "Thumbs.db", "desktop.ini", ".picasa.ini"}
+
+# Batch size for database commits
+BATCH_SIZE = 1000
