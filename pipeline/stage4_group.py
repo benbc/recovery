@@ -200,13 +200,16 @@ def complete_linkage_cluster(
             for p1 in merged_points:
                 for p2 in clusters[other_c]:
                     li, lj = min(p1, p2), max(p1, p2)
-                    if (li, lj) in local_distances:
-                        pair_dist = local_distances[(li, lj)]
-                        if not should_group(*pair_dist):
-                            all_pairs_ok = False
-                            break
-                        if pair_dist > max_dist:
-                            max_dist = pair_dist
+                    if (li, lj) not in local_distances:
+                        # Missing pair means it doesn't satisfy should_group
+                        all_pairs_ok = False
+                        break
+                    pair_dist = local_distances[(li, lj)]
+                    if not should_group(*pair_dist):
+                        all_pairs_ok = False
+                        break
+                    if pair_dist > max_dist:
+                        max_dist = pair_dist
                 if not all_pairs_ok:
                     break
 
