@@ -60,12 +60,46 @@ Note: `PHOTOBOOTH_FILTERED` was removed - Photo Booth photos are now separated i
 Perceptual hash hamming distance is used in two ways:
 
 1. **Grouping (Stage 4)**: Photos with hamming distance ≤ threshold are grouped together
-2. **Evidence (Stage 5)**: Within a group, hamming distance provides confidence:
-   - Distance 0: Identical content (different resolution or format)
-   - Distance ≤2: Definitely the same photo
-   - Distance ≤4: Very likely the same photo
-   - Distance ≤8: Probably the same photo (default threshold)
-   - Distance >8: May be different photos (similar composition)
+2. **Evidence (Stage 5)**: Within a group, hamming distance provides confidence
+
+### pHash Thresholds (based on visual sampling)
+
+| Distance | Meaning | Use |
+|----------|---------|-----|
+| 0 | Identical content | - |
+| ≤2 | Definitely same photo (minor processing differences) | DERIVATIVE, GENERIC_NAME rules |
+| 4 | ~50% same photo, ~50% same scene different shot | Too risky for auto-decisions |
+| 6-8 | Mostly same scene, different shot | - |
+| ≤10 | Same scene or similar composition | Grouping threshold |
+| 12+ | Increasingly unrelated | - |
+
+**Note**: Some aberrations exist (completely different photos at distance 6-10). These are rare but mean we can't trust intermediate distances for automated decisions.
+
+### dHash as secondary signal
+
+dHash can help in pHash borderline cases:
+
+**pHash 4-6 (borderline same photo):**
+- dHash 0 = same photo (strong signal)
+- dHash >1 = different photo
+
+### Combined thresholds for grouping
+
+| pHash | dHash | Decision | Rationale |
+|-------|-------|----------|-----------|
+| ≤10 | any | Group | Reliable same scene |
+| 12 | <22 | Group | Mostly same scene, not enough evidence to exclude |
+| 12 | ≥22 | Exclude | dHash confirms different scene |
+| 14 | ≤17 | Group | dHash confirms same scene |
+| 14 | >17 | Exclude | Mostly different, not enough evidence to include |
+| >14 | any | Exclude | Different scene |
+
+### Same photo (high confidence)
+
+| Criteria | Use |
+|----------|-----|
+| pHash ≤2 | DERIVATIVE, GENERIC_NAME rules |
+| pHash ≤6 AND dHash=0 | Also same photo |
 
 ## Path Quality Scoring
 

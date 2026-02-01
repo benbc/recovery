@@ -14,20 +14,21 @@ Next:
 - [ ] Stage 5: Group Rejection
 - [ ] Stage 6: Export
 
-## Hamming Distance Tuning (BLOCKING)
+## Hamming Distance Tuning
 
-Must tune before Stage 4. All these thresholds should be tuned together with visual sampling:
+### pHash (DONE)
+Visual sampling complete. Results:
+- **≤2**: Definitely same photo → use for DERIVATIVE, GENERIC_NAME
+- **≤10**: Same scene → use for grouping threshold
+- Distance 4 is ~50/50, too risky for auto-decisions
 
-| Rule | Current | Notes |
-|------|---------|-------|
-| Grouping threshold | TBD | Stage 4 clustering - MUST TUNE FIRST |
-| THUMBNAIL | ≤4 | May need adjustment |
-| DERIVATIVE | ≤2 | For same-aspect-ratio resizes |
-| GENERIC_NAME | =0 | Strictest; requires identical hash |
+### dHash (DONE)
+dHash useful as secondary signal in pHash borderline cases:
+- pHash 4-6: dHash 0 = same photo, >1 = different
+- pHash 10-14: dHash ≤17 = same scene, ≥22 = different
 
-- [ ] Build threshold tuning tool (show pairs at each hamming distance)
-- [ ] Sample pairs at levels 0, 2, 4, 6, 8, 10, 12
-- [ ] Determine where "same photo" becomes "different photo"
+### Cropping detection (FUTURE)
+Anticipate dHash helping with crop detection, but haven't seen enough evidence yet. Plan to review groups after Stage 4 and try to include dHash in automated resolution logic for Stage 5.
 
 ## Group Rules (Implemented, Need Testing)
 
@@ -60,6 +61,15 @@ Human selection detection:
 
 - [ ] **Directory coherence**: If X% of files in a directory are rejected, reject the rest too
   - Need exploration tool first to see examples
+
+## Issues to Investigate
+
+- [ ] **FATHER_IN_LAW rule incomplete**: Found photos that should be in father-in-law batch but weren't separated. Review rule pattern.
+  - pHash f7ebe0ce9c1c0d80 and b7ebe0ce9c1c0d90
+  - pHash d5d5b8aa2a6a6255 and 9b3ce0c30f6c831f
+- [ ] **pHash aberrations to investigate**:
+  - Distance 6: a6a4d859592ba7e4 and a6a6dc59190ba7d4 are completely different photos
+  - Distance 10: c63179ce077ae027 and e63171ce47c3c227 are different photos
 
 ## After Pipeline Works
 

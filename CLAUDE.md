@@ -34,6 +34,16 @@ To verify code compiles, use the wrapper script:
 ./run --status # Also runs queries against the database
 ```
 
+### Running Tools (Web UIs)
+
+Always run tools in the foreground so you can see errors and respond to feedback:
+```bash
+tools/run threshold_tuner   # Run a specific tool
+tools/run                   # List available tools
+```
+
+Flask debug mode auto-restarts on code changes. Keep the tool running while iterating - edit code and it reloads automatically.
+
 ### Code Changes
 
 - Keep code clean and clear

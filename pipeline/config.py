@@ -20,10 +20,26 @@ EXPORT_DIR = OUTPUT_ROOT / "exported"
 # Old database path (for importing hashes from previous pipeline)
 OLD_DB_PATH = Path("/home/ben/src/benbc/recovery/archive/organized/photos.db")
 
-# Perceptual hash hamming distance threshold for grouping
-# Distances are even numbers (0, 2, 4, 6, 8, 10, 12...)
-# Lower = stricter (fewer false positives), Higher = more inclusive
-HAMMING_THRESHOLD = 8
+# Perceptual hash hamming distance thresholds
+# Based on visual sampling of pHash and dHash combinations
+
+# Same photo detection (high confidence)
+#   pHash ≤2: definitely same photo
+#   pHash ≤6 AND dHash=0: also same photo
+PHASH_SAME_PHOTO = 2
+PHASH_SAME_PHOTO_WITH_DHASH = 6
+DHASH_SAME_PHOTO = 0
+
+# Grouping thresholds (same scene detection)
+#   pHash ≤10: reliable same scene
+#   pHash 12: group if dHash <22, exclude if ≥22
+#   pHash 14: group if dHash ≤17, exclude if >17
+#   pHash >14: different scene
+PHASH_SAFE_GROUP = 10
+PHASH_BORDERLINE_12 = 12
+PHASH_BORDERLINE_14 = 14
+DHASH_EXCLUDE_AT_12 = 22  # dHash ≥22 at pHash 12 → exclude
+DHASH_INCLUDE_AT_14 = 17  # dHash ≤17 at pHash 14 → include
 
 # Image MIME types to process, with their file extensions
 MIME_TO_EXT = {

@@ -5,6 +5,12 @@ Cluster photos by perceptual hash similarity using hamming distance.
 Uses union-find algorithm for efficient grouping.
 Store group membership only (ranking calculated on-the-fly when needed).
 
+Combined pHash/dHash thresholds (from visual sampling):
+- pHash ≤10: group (reliable same scene)
+- pHash 12: group if dHash <22, exclude if ≥22
+- pHash 14: group if dHash ≤17, exclude if >17
+- pHash >14: don't group
+
 Output: `duplicate_groups` table (photo_id, group_id)
 """
 
@@ -12,13 +18,39 @@ from collections import defaultdict
 
 from tqdm import tqdm
 
-from .config import HAMMING_THRESHOLD
+from .config import (
+    PHASH_SAFE_GROUP,
+    PHASH_BORDERLINE_12,
+    PHASH_BORDERLINE_14,
+    DHASH_EXCLUDE_AT_12,
+    DHASH_INCLUDE_AT_14,
+)
 from .database import (
     get_connection,
     get_photos_for_grouping,
     record_stage_completion,
 )
 from .utils.hashing import hamming_distance
+
+
+def should_group(phash_dist: int, dhash_dist: int) -> bool:
+    """
+    Determine if two photos should be grouped based on combined pHash/dHash thresholds.
+
+    Returns True if the photos should be in the same group.
+    """
+    if phash_dist <= PHASH_SAFE_GROUP:
+        # pHash ≤10: reliable same scene
+        return True
+    elif phash_dist <= PHASH_BORDERLINE_12:
+        # pHash 11-12: group unless dHash strongly disagrees
+        return dhash_dist < DHASH_EXCLUDE_AT_12
+    elif phash_dist <= PHASH_BORDERLINE_14:
+        # pHash 13-14: only group if dHash confirms
+        return dhash_dist <= DHASH_INCLUDE_AT_14
+    else:
+        # pHash >14: don't group
+        return False
 
 
 class UnionFind:
@@ -65,22 +97,24 @@ class UnionFind:
         return dict(groups)
 
 
-def run_stage4(
-    threshold: int = HAMMING_THRESHOLD,
-    clear_existing: bool = False
-) -> None:
+def run_stage4(clear_existing: bool = False) -> None:
     """
     Run Stage 4: Group Duplicates.
 
+    Uses combined pHash/dHash thresholds for grouping decisions.
+
     Args:
-        threshold: Hamming distance threshold for grouping (lower = stricter)
         clear_existing: If True, clear existing groups before running
     """
     print("=" * 70)
     print("STAGE 4: GROUP DUPLICATES")
     print("=" * 70)
     print()
-    print(f"Hamming distance threshold: {threshold}")
+    print("Thresholds:")
+    print(f"  pHash ≤{PHASH_SAFE_GROUP}: group")
+    print(f"  pHash {PHASH_SAFE_GROUP+1}-{PHASH_BORDERLINE_12}: group if dHash <{DHASH_EXCLUDE_AT_12}")
+    print(f"  pHash {PHASH_BORDERLINE_12+1}-{PHASH_BORDERLINE_14}: group if dHash ≤{DHASH_INCLUDE_AT_14}")
+    print(f"  pHash >{PHASH_BORDERLINE_14}: don't group")
     print()
 
     with get_connection() as conn:
@@ -108,19 +142,22 @@ def run_stage4(
         # Compare all pairs (O(n^2) but necessary for clustering)
         # This is the expensive part - could be optimized with LSH if needed
         for i in tqdm(range(len(photos)), desc="Comparing"):
-            hash1 = photos[i]["perceptual_hash"]
+            phash1 = photos[i]["perceptual_hash"]
+            dhash1 = photos[i]["dhash"]
             id1 = photos[i]["id"]
 
             # Ensure this photo is in the union-find
             uf.find(id1)
 
             for j in range(i + 1, len(photos)):
-                hash2 = photos[j]["perceptual_hash"]
+                phash2 = photos[j]["perceptual_hash"]
+                dhash2 = photos[j]["dhash"]
                 id2 = photos[j]["id"]
 
-                dist = hamming_distance(hash1, hash2)
+                phash_dist = hamming_distance(phash1, phash2)
+                dhash_dist = hamming_distance(dhash1, dhash2)
 
-                if dist <= threshold:
+                if should_group(phash_dist, dhash_dist):
                     uf.union(id1, id2)
                     duplicate_pairs += 1
 

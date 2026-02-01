@@ -36,7 +36,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from pipeline.config import DB_PATH, HAMMING_THRESHOLD, SOURCE_ROOT, EXPORT_DIR, OLD_DB_PATH, FILES_DIR
+from pipeline.config import DB_PATH, SOURCE_ROOT, EXPORT_DIR, OLD_DB_PATH, FILES_DIR
 from pipeline.database import get_connection, init_db
 
 
@@ -172,10 +172,7 @@ def run_stage(stage: str, args: argparse.Namespace):
 
     elif stage == "4":
         from pipeline.stage4_group import run_stage4
-        run_stage4(
-            threshold=args.threshold or HAMMING_THRESHOLD,
-            clear_existing=args.clear
-        )
+        run_stage4(clear_existing=args.clear)
 
     elif stage == "5":
         from pipeline.stage5_group_reject import run_stage5
@@ -224,10 +221,6 @@ def main():
     parser.add_argument(
         "--import-hashes", type=str,
         help="Import perceptual hashes from old database (Stage 3)"
-    )
-    parser.add_argument(
-        "--threshold", type=int,
-        help="Hamming distance threshold for grouping (Stage 4)"
     )
     parser.add_argument(
         "--export-dir", type=str,

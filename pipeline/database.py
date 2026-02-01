@@ -178,10 +178,11 @@ def get_photos_for_phash(conn: sqlite3.Connection) -> list[dict]:
 def get_photos_for_grouping(conn: sqlite3.Connection) -> list[dict]:
     """Get photos with perceptual hashes for duplicate grouping."""
     cursor = conn.execute("""
-        SELECT p.id, p.perceptual_hash, p.width, p.height, p.file_size, p.has_exif
+        SELECT p.id, p.perceptual_hash, p.dhash, p.width, p.height, p.file_size, p.has_exif
         FROM photos p
         LEFT JOIN individual_decisions d ON p.id = d.photo_id
         WHERE p.perceptual_hash IS NOT NULL
+        AND p.dhash IS NOT NULL
         AND d.photo_id IS NULL
     """)
     return [dict(row) for row in cursor.fetchall()]

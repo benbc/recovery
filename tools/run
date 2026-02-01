@@ -1,0 +1,31 @@
+#!/bin/bash
+# Run a tool with auto-restart on code changes (via Flask debug mode)
+# Output is visible for debugging
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ -z "$1" ]; then
+    echo "Usage: tools/run <tool_name>"
+    echo ""
+    echo "Available tools:"
+    for f in "$SCRIPT_DIR"/*.py; do
+        [ -f "$f" ] && basename "$f" .py
+    done | grep -v __init__ | sed 's/^/  /'
+    exit 1
+fi
+
+TOOL="$1"
+TOOL_PATH="$SCRIPT_DIR/${TOOL}.py"
+
+if [ ! -f "$TOOL_PATH" ]; then
+    echo "Error: Tool not found: $TOOL_PATH"
+    exit 1
+fi
+
+echo "Starting $TOOL..."
+echo "Output will appear below. Flask debug mode will auto-restart on code changes."
+echo "---"
+export PYTHONUNBUFFERED=1
+exec uv run --script "$TOOL_PATH"
