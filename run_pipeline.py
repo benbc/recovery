@@ -41,7 +41,7 @@ from pipeline.database import get_connection, init_db
 
 
 # Stage order for --from-stage
-STAGE_ORDER = ["1", "1b", "2", "3", "4", "5", "6"]
+STAGE_ORDER = ["1", "1b", "2", "3", "4", "4b", "5", "6"]
 
 
 def show_status():
@@ -173,6 +173,10 @@ def run_stage(stage: str, args: argparse.Namespace):
     elif stage == "4":
         from pipeline.stage4_group import run_stage4
         run_stage4(clear_existing=args.clear)
+
+    elif stage == "4b":
+        from pipeline.stage4b_merge import run_stage4b
+        run_stage4b()
 
     elif stage == "5":
         from pipeline.stage5_group_reject import run_stage5
