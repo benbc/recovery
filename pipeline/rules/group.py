@@ -5,13 +5,17 @@ These reject photos based on comparison with other group members.
 Rules can use hamming distance between specific photos as evidence
 (close = definitely same, threshold = maybe).
 
-Ranking for decisions: resolution > file_size > has_exif > path_quality
+Rule categories:
+1. Automated rejection (confident): APP_MIGRATION, THUMBNAIL, PREVIEW, RESIZE_DERIVATIVE
+2. Human selection detection: HUMAN_SELECTED (semantic name, crop, moved-from-siblings)
 
-Each rule returns a tuple of (rejected_photo_id, kept_photo_id, rule_name)
-or None if the rule doesn't apply.
+Fallback ranking (when no rules apply): resolution > file_size > has_exif
+
+Each rule returns a list of (rejected_photo_id, rule_name) tuples.
 """
 
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -19,7 +23,8 @@ from ..utils.hashing import hamming_distance
 
 
 # Type alias for group rule functions
-GroupRuleFunc = Callable[[list[dict]], list[tuple[str, str, str]]]
+# Returns list of (rejected_photo_id, rule_name) tuples
+GroupRuleFunc = Callable[[list[dict]], list[tuple[str, str]]]
 
 
 def _get_paths(photo: dict) -> list[str]:
@@ -81,12 +86,128 @@ def _is_camera_generated_name(filename: str) -> bool:
     stem = Path(filename).stem.upper()
     patterns = [
         r"^IMG_\d+$",
+        r"^IMG_E\d+$",  # iPhone edited
         r"^DSC_?\d+$",
         r"^DSCN?\d+$",
         r"^P\d{7}$",
         r"^\d{8}_\d+$",  # YYYYMMDD_XXXX
+        r"^\d{8}-\d+$",  # YYYYMMDD-XXXX
+        r"^PHOTO-\d{4}-\d{2}-\d{2}",  # PHOTO-YYYY-MM-DD
     ]
     return any(re.match(p, stem) for p in patterns)
+
+
+def _has_semantic_name(photo: dict) -> bool:
+    """
+    Check if photo has a human-assigned semantic name.
+
+    Returns True if the filename appears to be human-named rather than
+    camera-generated (IMG_xxx, DSC_xxx, etc.).
+    """
+    path = _get_first_path(photo)
+    if not path:
+        return False
+    filename = Path(path).name
+    return not _is_camera_generated_name(filename)
+
+
+def _get_aspect_ratio(photo: dict) -> float:
+    """Get aspect ratio (width/height) for a photo."""
+    width = photo.get("width") or 0
+    height = photo.get("height") or 0
+    if height == 0:
+        return 0
+    return width / height
+
+
+def _is_crop_of_others(photo: dict, group: list[dict]) -> bool:
+    """
+    Check if photo appears to be a crop (different aspect ratio, smaller).
+
+    A crop has:
+    - Different aspect ratio from most others in the group (>5% difference)
+    - Smaller total pixels than the largest in group
+
+    This signals human selection - someone chose this framing.
+    """
+    my_ratio = _get_aspect_ratio(photo)
+    my_pixels = _resolution(photo)
+
+    if my_ratio == 0 or my_pixels == 0:
+        return False
+
+    # Get aspect ratios of others
+    other_ratios = []
+    max_pixels = my_pixels
+    for other in group:
+        if other["id"] == photo["id"]:
+            continue
+        ratio = _get_aspect_ratio(other)
+        if ratio > 0:
+            other_ratios.append(ratio)
+        pixels = _resolution(other)
+        if pixels > max_pixels:
+            max_pixels = pixels
+
+    if not other_ratios:
+        return False
+
+    # Find most common aspect ratio among others
+    # (simple approach: use median)
+    other_ratios.sort()
+    median_ratio = other_ratios[len(other_ratios) // 2]
+
+    # Check if my ratio differs significantly (>5%)
+    ratio_diff = abs(my_ratio - median_ratio) / median_ratio if median_ratio else 0
+    is_different_ratio = ratio_diff > 0.05
+
+    # Check if I'm smaller (indicating crop, not source of crops)
+    is_smaller = my_pixels < max_pixels
+
+    return is_different_ratio and is_smaller
+
+
+def _get_parent_folder(path: str) -> str:
+    """Get the parent folder path for grouping."""
+    return str(Path(path).parent)
+
+
+def _was_moved_from_siblings(photo: dict, group: list[dict]) -> bool:
+    """
+    Check if photo was moved to a different location than its siblings.
+
+    If most photos in a group share a parent folder but this one is elsewhere,
+    it suggests someone deliberately moved/organized this photo.
+
+    Requires at least 2 other photos sharing a common location.
+    """
+    my_paths = _get_paths(photo)
+    if not my_paths:
+        return False
+
+    my_parents = {_get_parent_folder(p) for p in my_paths}
+
+    # Collect parent folders from all other photos
+    sibling_parents = []
+    for other in group:
+        if other["id"] == photo["id"]:
+            continue
+        for path in _get_paths(other):
+            sibling_parents.append(_get_parent_folder(path))
+
+    if len(sibling_parents) < 2:
+        return False
+
+    # Find most common parent among siblings
+    parent_counts = Counter(sibling_parents)
+    most_common_parent, count = parent_counts.most_common(1)[0]
+
+    # Need at least 2 siblings in the common location
+    if count < 2:
+        return False
+
+    # Check if I'm NOT in the common location
+    return most_common_parent not in my_parents
 
 
 def _extract_base_filename(path: str) -> str:
@@ -118,36 +239,26 @@ def _rank_photo(photo: dict) -> tuple:
     """
     Create a ranking tuple for a photo.
     Higher values = better quality = should be kept.
-    Ranking: resolution > file_size > has_exif > path_quality
+    Ranking: resolution > file_size > has_exif
+
+    Used as fallback/hint when no selection rules apply.
     """
     resolution = _resolution(photo)
     file_size = photo.get("file_size") or 0
     has_exif = 1 if photo.get("has_exif") else 0
 
-    # Path quality: prefer non-thumbnail, non-preview paths
-    path_quality = 0
-    for path in _get_paths(photo):
-        if _is_thumbnail_path(path) or _is_previews_path(path):
-            continue
-        if _is_photos_library(path):
-            path_quality = 3  # Prefer Photos.app
-        elif _is_iphoto_library(path):
-            path_quality = max(path_quality, 2)
-        else:
-            path_quality = max(path_quality, 1)
-
-    return (resolution, file_size, has_exif, path_quality)
+    return (resolution, file_size, has_exif)
 
 
 # =============================================================================
 # GROUP REJECTION RULES
 # =============================================================================
 
-def rule_thumbnail(group: list[dict]) -> list[tuple[str, str, str]]:
+def rule_thumbnail(group: list[dict]) -> list[tuple[str, str]]:
     """
     THUMBNAIL: Reject smaller thumbnail when larger non-thumbnail exists.
 
-    For each thumbnail, finds a master that is BOTH:
+    For each thumbnail, checks if ANY master exists that is BOTH:
     1. Higher resolution than the thumbnail
     2. Low hamming distance (very similar) to this specific thumbnail
 
@@ -164,7 +275,6 @@ def rule_thumbnail(group: list[dict]) -> list[tuple[str, str, str]]:
     if not thumbnails or not masters:
         return []
 
-    # For each thumbnail, find its best matching master
     for thumb in thumbnails:
         thumb_res = _resolution(thumb)
         thumb_hash = thumb.get("perceptual_hash")
@@ -172,11 +282,7 @@ def rule_thumbnail(group: list[dict]) -> list[tuple[str, str, str]]:
         if not thumb_hash:
             continue
 
-        # Find the master most similar to this thumbnail (lowest hamming distance)
-        best_master = None
-        best_dist = float("inf")
-        best_master_res = 0
-
+        # Check if ANY master is larger and similar
         for master in masters:
             master_res = _resolution(master)
             master_hash = master.get("perceptual_hash")
@@ -184,28 +290,17 @@ def rule_thumbnail(group: list[dict]) -> list[tuple[str, str, str]]:
             if not master_hash:
                 continue
 
-            # Must be larger
-            if master_res <= thumb_res:
-                continue
-
-            # Must be similar (low hamming distance)
-            dist = hamming_distance(thumb_hash, master_hash)
-            if dist > 4:  # TODO: tune this threshold
-                continue
-
-            # Prefer lowest hamming distance, then highest resolution as tiebreaker
-            if dist < best_dist or (dist == best_dist and master_res > best_master_res):
-                best_master = master
-                best_dist = dist
-                best_master_res = master_res
-
-        if best_master:
-            rejections.append((thumb["id"], best_master["id"], "THUMBNAIL"))
+            # Must be larger and similar
+            if master_res > thumb_res:
+                dist = hamming_distance(thumb_hash, master_hash)
+                if dist <= 4:  # TODO: tune this threshold
+                    rejections.append((thumb["id"], "THUMBNAIL"))
+                    break  # Only reject once
 
     return rejections
 
 
-def rule_preview(group: list[dict]) -> list[tuple[str, str, str]]:
+def rule_preview(group: list[dict]) -> list[tuple[str, str]]:
     """
     PREVIEW: Reject preview versions when larger original exists.
 
@@ -225,23 +320,23 @@ def rule_preview(group: list[dict]) -> list[tuple[str, str, str]]:
     if not previews or not non_previews:
         return []
 
-    # Find best non-preview
-    non_previews.sort(key=_rank_photo, reverse=True)
-    best = non_previews[0]
-
     for preview in previews:
-        # Check filename match
         preview_filename = Path(_get_first_path(preview)).name.lower()
-        best_filename = Path(_get_first_path(best)).name.lower()
+        preview_size = preview.get("file_size") or 0
 
-        if preview_filename == best_filename:
-            if (best.get("file_size") or 0) > (preview.get("file_size") or 0):
-                rejections.append((preview["id"], best["id"], "PREVIEW"))
+        # Check against ALL non-previews for a match
+        for non_preview in non_previews:
+            non_preview_filename = Path(_get_first_path(non_preview)).name.lower()
+            non_preview_size = non_preview.get("file_size") or 0
+
+            if preview_filename == non_preview_filename and non_preview_size > preview_size:
+                rejections.append((preview["id"], "PREVIEW"))
+                break  # Only reject once
 
     return rejections
 
 
-def rule_iphoto_copy(group: list[dict]) -> list[tuple[str, str, str]]:
+def rule_iphoto_copy(group: list[dict]) -> list[tuple[str, str]]:
     """
     IPHOTO_COPY: Reject iPhoto version when same exists in Photos.app library.
 
@@ -270,7 +365,7 @@ def rule_iphoto_copy(group: list[dict]) -> list[tuple[str, str, str]]:
             photos_res = _resolution(photos)
 
             if iphoto_res == photos_res:
-                rejections.append((iphoto["id"], photos["id"], "IPHOTO_COPY"))
+                rejections.append((iphoto["id"], "IPHOTO_COPY"))
                 break
 
     return rejections
@@ -280,49 +375,55 @@ def rule_iphoto_copy(group: list[dict]) -> list[tuple[str, str, str]]:
 # in Stage 2 (individual rules) so they won't appear in duplicate groups.
 
 
-def rule_derivative(group: list[dict]) -> list[tuple[str, str, str]]:
+def rule_derivative(group: list[dict]) -> list[tuple[str, str]]:
     """
     DERIVATIVE: Reject resized versions of identical content.
 
-    When photos have same perceptual hash but different resolutions,
-    keep the largest one.
+    When a smaller photo is very similar (hamming <= 2) to a larger one,
+    reject the smaller one as a derivative.
     """
     rejections = []
 
-    # Sort by resolution (highest first)
-    sorted_group = sorted(group, key=lambda p: _resolution(p), reverse=True)
-
-    if len(sorted_group) < 2:
+    if len(group) < 2:
         return []
 
-    best = sorted_group[0]
-    best_res = _resolution(best)
-
-    for photo in sorted_group[1:]:
+    for photo in group:
         photo_res = _resolution(photo)
+        photo_hash = photo.get("perceptual_hash")
 
-        # Skip if same resolution (might be different photos)
-        if photo_res == best_res:
+        if not photo_hash:
             continue
 
-        # Check hamming distance
-        if photo.get("perceptual_hash") and best.get("perceptual_hash"):
-            dist = hamming_distance(photo["perceptual_hash"], best["perceptual_hash"])
+        # Check if ANY larger photo is very similar
+        for other in group:
+            if other["id"] == photo["id"]:
+                continue
 
-            # Very similar (hamming <= 2) = definitely derivative
-            if dist <= 2 and photo_res < best_res * 0.9:
-                rejections.append((photo["id"], best["id"], "DERIVATIVE"))
+            other_res = _resolution(other)
+            other_hash = other.get("perceptual_hash")
+
+            if not other_hash:
+                continue
+
+            # Other must be significantly larger
+            if other_res <= photo_res or photo_res >= other_res * 0.9:
+                continue
+
+            dist = hamming_distance(photo_hash, other_hash)
+            if dist <= 2:
+                rejections.append((photo["id"], "DERIVATIVE"))
+                break  # Only reject once
 
     return rejections
 
 
-def rule_generic_name(group: list[dict]) -> list[tuple[str, str, str]]:
+def rule_generic_name(group: list[dict]) -> list[tuple[str, str]]:
     """
     GENERIC_NAME: Reject camera-named version when human-named pixel-identical exists.
 
-    If two photos are pixel-identical (same file size + very close hash) and one
+    If two photos are pixel-identical (same file size + identical hash) and one
     has a camera-generated name (IMG_xxx) while the other has a human name,
-    keep the human-named version.
+    reject the camera-named version.
     """
     rejections = []
 
@@ -353,18 +454,65 @@ def rule_generic_name(group: list[dict]) -> list[tuple[str, str, str]]:
         if not camera_named or not human_named:
             continue
 
-        # Pick best human-named as keeper
-        best_human = max(human_named, key=_rank_photo)
-
+        # For each camera-named photo, check if ANY human-named photo is identical
         for camera in camera_named:
-            # Verify very close hash (hamming <= 0 = identical)
-            if camera.get("perceptual_hash") and best_human.get("perceptual_hash"):
-                dist = hamming_distance(
-                    camera["perceptual_hash"],
-                    best_human["perceptual_hash"]
-                )
-                if dist == 0:
-                    rejections.append((camera["id"], best_human["id"], "GENERIC_NAME"))
+            camera_hash = camera.get("perceptual_hash")
+            if not camera_hash:
+                continue
+
+            for human in human_named:
+                human_hash = human.get("perceptual_hash")
+                if not human_hash:
+                    continue
+
+                if hamming_distance(camera_hash, human_hash) == 0:
+                    rejections.append((camera["id"], "GENERIC_NAME"))
+                    break  # Only reject once per camera-named photo
+
+    return rejections
+
+
+def rule_human_selected(group: list[dict]) -> list[tuple[str, str]]:
+    """
+    HUMAN_SELECTED: Keep photos with evidence of human selection, reject others.
+
+    Selection signals:
+    - Semantic filename (not camera-generated like IMG_xxx)
+    - Is a crop (different aspect ratio, smaller - someone chose that framing)
+    - Was moved from siblings (most of group in one place, this one elsewhere)
+
+    If any photos have selection signals, keep those and reject the rest.
+    If multiple have signals, keep all of them (human wanted multiple versions).
+    If none have signals, don't reject anything (leave for manual review).
+    """
+    rejections = []
+
+    # Find photos with selection signals
+    selected = []
+    not_selected = []
+
+    for photo in group:
+        has_signal = (
+            _has_semantic_name(photo) or
+            _is_crop_of_others(photo, group) or
+            _was_moved_from_siblings(photo, group)
+        )
+        if has_signal:
+            selected.append(photo)
+        else:
+            not_selected.append(photo)
+
+    # If no selection signals found, don't reject anything
+    if not selected:
+        return []
+
+    # If all have signals (or only one photo), don't reject anything
+    if not not_selected:
+        return []
+
+    # Reject all non-selected photos
+    for photo in not_selected:
+        rejections.append((photo["id"], "HUMAN_SELECTED"))
 
     return rejections
 
@@ -373,20 +521,28 @@ def rule_generic_name(group: list[dict]) -> list[tuple[str, str, str]]:
 # RULE REGISTRY
 # =============================================================================
 
-GROUP_RULES: list[GroupRuleFunc] = [
-    rule_thumbnail,
-    rule_preview,
-    rule_iphoto_copy,
-    rule_derivative,
-    rule_generic_name,
+# Automated rejection rules (high confidence, apply first)
+AUTOMATED_RULES: list[GroupRuleFunc] = [
+    rule_iphoto_copy,    # APP_MIGRATION: prefer Photos.app over iPhoto
+    rule_thumbnail,      # THUMBNAIL_PATH: reject thumbnails
+    rule_preview,        # PREVIEW: reject preview versions
+    rule_derivative,     # RESIZE_DERIVATIVE: reject resized versions
 ]
 
+# Human selection rules (detect curation signals)
+SELECTION_RULES: list[GroupRuleFunc] = [
+    rule_generic_name,   # Strict: same size + identical hash + semantic name
+    rule_human_selected, # General: any selection signal (name, crop, moved)
+]
 
-def apply_group_rules(group: list[dict]) -> list[tuple[str, str, str]]:
+GROUP_RULES: list[GroupRuleFunc] = AUTOMATED_RULES + SELECTION_RULES
+
+
+def apply_group_rules(group: list[dict]) -> list[tuple[str, str]]:
     """
     Apply all group rules to a duplicate group.
 
-    Returns list of (rejected_photo_id, kept_photo_id, rule_name) tuples.
+    Returns list of (rejected_photo_id, rule_name) tuples.
     A photo can only be rejected once (first rule wins).
     """
     all_rejections = []
@@ -394,9 +550,9 @@ def apply_group_rules(group: list[dict]) -> list[tuple[str, str, str]]:
 
     for rule in GROUP_RULES:
         rejections = rule(group)
-        for rejected_id, kept_id, rule_name in rejections:
+        for rejected_id, rule_name in rejections:
             if rejected_id not in rejected_ids:
-                all_rejections.append((rejected_id, kept_id, rule_name))
+                all_rejections.append((rejected_id, rule_name))
                 rejected_ids.add(rejected_id)
 
     return all_rejections

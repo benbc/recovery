@@ -24,6 +24,16 @@ The wrapper:
 
 Never run stage modules directly (e.g., `python -m pipeline.stage2_individual`).
 
+### Running Python Code
+
+Dependencies are specified via inline `# /// script` headers (PEP 723), so running `python` or `uv run python` directly won't have dependencies available.
+
+To verify code compiles, use the wrapper script:
+```bash
+./run --help   # Imports all modules, verifies syntax
+./run --status # Also runs queries against the database
+```
+
 ### Code Changes
 
 - Keep code clean and clear

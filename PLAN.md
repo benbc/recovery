@@ -123,14 +123,6 @@ CREATE TABLE group_rejections (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Aggregated paths from rejected duplicates
-CREATE TABLE aggregated_paths (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    kept_photo_id TEXT NOT NULL REFERENCES photos(id),
-    source_path TEXT NOT NULL,     -- Path from a rejected duplicate
-    from_photo_id TEXT NOT NULL    -- Which rejected photo this came from
-);
-
 -- Pipeline state tracking
 CREATE TABLE pipeline_state (
     stage TEXT PRIMARY KEY,

@@ -3,11 +3,8 @@ Stage 5: Group Rejection
 
 Apply rules based on relationship to other group members.
 Rules can use hamming distance between specific photos as evidence.
-Ranking for decisions: resolution > file_size > has_exif > path_quality
-When rejecting, aggregate path info from rejected photo to kept photo(s).
 
 Output: `group_rejections` table (photo_id, group_id, rule_name)
-        `aggregated_paths` table (kept_photo_id, source_path, from_photo_id)
 """
 
 from collections import defaultdict
@@ -39,7 +36,6 @@ def run_stage5(clear_existing: bool = False) -> None:
         if clear_existing:
             print("Clearing existing Stage 5 data...")
             conn.execute("DELETE FROM group_rejections")
-            conn.execute("DELETE FROM aggregated_paths")
             conn.commit()
 
         # Get all group IDs
@@ -56,13 +52,11 @@ def run_stage5(clear_existing: bool = False) -> None:
         # Track stats
         stats = defaultdict(int)
         total_rejections = 0
-        total_paths_aggregated = 0
 
         rejection_batch = []
-        aggregation_batch = []
 
-        def flush_batches():
-            nonlocal rejection_batch, aggregation_batch
+        def flush_batch():
+            nonlocal rejection_batch
             if rejection_batch:
                 conn.executemany(
                     """
@@ -72,15 +66,6 @@ def run_stage5(clear_existing: bool = False) -> None:
                     rejection_batch,
                 )
                 rejection_batch = []
-            if aggregation_batch:
-                conn.executemany(
-                    """
-                    INSERT INTO aggregated_paths (kept_photo_id, source_path, from_photo_id)
-                    VALUES (:kept_photo_id, :source_path, :from_photo_id)
-                    """,
-                    aggregation_batch,
-                )
-                aggregation_batch = []
             conn.commit()
 
         # Process each group
@@ -94,7 +79,7 @@ def run_stage5(clear_existing: bool = False) -> None:
             # Apply group rules
             rejections = apply_group_rules(members)
 
-            for rejected_id, kept_id, rule_name in rejections:
+            for rejected_id, rule_name in rejections:
                 rejection_batch.append({
                     "photo_id": rejected_id,
                     "group_id": group_id,
@@ -103,35 +88,15 @@ def run_stage5(clear_existing: bool = False) -> None:
                 stats[rule_name] += 1
                 total_rejections += 1
 
-                # Aggregate paths from rejected photo to kept photo
-                rejected_photo = next(
-                    (m for m in members if m["id"] == rejected_id),
-                    None
-                )
-                if rejected_photo:
-                    paths = rejected_photo.get("all_paths", "").split("|")
-                    for path in paths:
-                        if path:
-                            aggregation_batch.append({
-                                "kept_photo_id": kept_id,
-                                "source_path": path,
-                                "from_photo_id": rejected_id,
-                            })
-                            total_paths_aggregated += 1
-
             # Flush periodically
             if len(rejection_batch) >= 1000:
-                flush_batches()
+                flush_batch()
 
         # Final flush
-        flush_batches()
+        flush_batch()
 
         # Record completion
-        record_stage_completion(
-            conn, "5",
-            total_rejections,
-            f"paths_aggregated={total_paths_aggregated}"
-        )
+        record_stage_completion(conn, "5", total_rejections)
 
     # Print summary
     print()
@@ -141,7 +106,6 @@ def run_stage5(clear_existing: bool = False) -> None:
     print()
     print(f"Groups processed:       {len(group_ids):,}")
     print(f"Photos rejected:        {total_rejections:,}")
-    print(f"Paths aggregated:       {total_paths_aggregated:,}")
     print()
 
     if stats:

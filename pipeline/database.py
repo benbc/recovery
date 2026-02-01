@@ -56,14 +56,6 @@ CREATE TABLE IF NOT EXISTS group_rejections (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Aggregated paths from rejected duplicates
-CREATE TABLE IF NOT EXISTS aggregated_paths (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    kept_photo_id TEXT NOT NULL REFERENCES photos(id),
-    source_path TEXT NOT NULL,     -- Path from a rejected duplicate
-    from_photo_id TEXT NOT NULL    -- Which rejected photo this came from
-);
-
 -- Pipeline state tracking
 CREATE TABLE IF NOT EXISTS pipeline_state (
     stage TEXT PRIMARY KEY,
@@ -78,7 +70,6 @@ CREATE INDEX IF NOT EXISTS idx_photo_paths_photo_id ON photo_paths(photo_id);
 CREATE INDEX IF NOT EXISTS idx_individual_decisions_decision ON individual_decisions(decision);
 CREATE INDEX IF NOT EXISTS idx_duplicate_groups_group_id ON duplicate_groups(group_id);
 CREATE INDEX IF NOT EXISTS idx_group_rejections_group_id ON group_rejections(group_id);
-CREATE INDEX IF NOT EXISTS idx_aggregated_paths_kept_photo_id ON aggregated_paths(kept_photo_id);
 """
 
 
@@ -146,7 +137,6 @@ def clear_stage_data(conn: sqlite3.Connection, stage: str) -> None:
         conn.execute("DELETE FROM duplicate_groups")
     elif stage == "5":
         conn.execute("DELETE FROM group_rejections")
-        conn.execute("DELETE FROM aggregated_paths")
 
     conn.execute("DELETE FROM pipeline_state WHERE stage = ?", (stage,))
     conn.commit()

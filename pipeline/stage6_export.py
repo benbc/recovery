@@ -3,7 +3,6 @@ Stage 6: Export
 
 Copy/hardlink accepted photos to organized directory.
 Structure: flat with hash-based names (date-based organization TBD).
-Include all aggregated paths as metadata.
 
 Output: Organized photos ready for use
 """
@@ -23,26 +22,12 @@ from .database import (
 
 
 def get_all_paths_for_photo(conn, photo_id: str) -> list[str]:
-    """Get all source paths for a photo, including aggregated paths."""
-    paths = []
-
-    # Original paths
+    """Get all source paths for a photo."""
     cursor = conn.execute(
         "SELECT source_path FROM photo_paths WHERE photo_id = ?",
         (photo_id,)
     )
-    for row in cursor:
-        paths.append(row["source_path"])
-
-    # Aggregated paths from rejected duplicates
-    cursor = conn.execute(
-        "SELECT source_path FROM aggregated_paths WHERE kept_photo_id = ?",
-        (photo_id,)
-    )
-    for row in cursor:
-        paths.append(row["source_path"])
-
-    return paths
+    return [row["source_path"] for row in cursor]
 
 
 def run_stage6(
