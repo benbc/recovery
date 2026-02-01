@@ -41,6 +41,20 @@ To verify code compiles, use the wrapper script:
 - Update RULES.md when adding/modifying rules
 - Update TODO.md when discovering new work items
 - Stages can always be re-run after fixes
+- Remove unused code/tables - keep codebase minimal to reduce confusion
+
+## Design Principles (Group Rules)
+
+- **Never use ranking for decisions**: `_rank_photo()` is only for hints/fallback, never for actual keep/reject decisions
+- **Compare against ALL candidates**: Rules should check if ANY matching photo exists, not pick "best" and only compare against that
+- **Simple rejection records**: Group rules return `(rejected_id, rule_name)` - we don't track which specific photo something was "kept in favor of" because that doesn't reflect actual decision-making
+- **Selection signals**: Evidence of human curation (semantic filename, crop, moved-from-siblings) means keep that photo
+
+## Important: Hamming Threshold
+
+**Do NOT run Stage 4 (grouping) until the hamming threshold has been tuned.**
+
+The threshold determines what's considered a "duplicate" - too loose and different photos get grouped, too strict and real duplicates are missed. Build a visual sampling tool first.
 
 ## Current State
 

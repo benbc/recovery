@@ -1,48 +1,65 @@
 # Photo Recovery Pipeline - TODO
 
-## Before First Full Run
+## Current State
 
-- [ ] Review machinery (stages, database, runner)
-- [ ] Run Stage 1 on a small subset to verify it works
+Completed:
+- [x] Stage 1: Scan & Extract (85,710 photos, 106,246 paths)
+- [x] Stage 1b: Create hardlinks for safety/serving
+- [x] Stage 2: Individual Classification (29,875 rejected, 9,551 separated)
+- [x] Stage 3: Perceptual Hash (pHash + dHash with EXIF rotation normalization)
 
-## Rules Needing Verification
+Next:
+- [ ] **Tune hamming threshold** before running Stage 4 (grouping)
+- [ ] Stage 4: Group Duplicates
+- [ ] Stage 5: Group Rejection
+- [ ] Stage 6: Export
 
-These need visual examples before we can tune thresholds:
+## Hamming Distance Tuning (BLOCKING)
 
-- [ ] **TINY_ICON**: Verify <5000px images aren't thumbnails we want to keep
-- [ ] **rule_preview**: Check if needs per-preview hamming distance (like thumbnail fix)
-- [ ] **rule_iphoto_copy**: Get examples - may need tighter matching (hamming/names)
-- [ ] **rule_derivative**: Verify hamming ≤2 is safe (was identical hash before)
-
-## Hamming Distance Tuning
-
-All these thresholds should be tuned together with visual sampling:
+Must tune before Stage 4. All these thresholds should be tuned together with visual sampling:
 
 | Rule | Current | Notes |
 |------|---------|-------|
-| THUMBNAIL | ≤4 | May need to be lower |
-| DERIVATIVE | ≤2 | Looser than before |
-| GENERIC_NAME | =0 | Strictest; probably correct |
-| Grouping threshold | ≤8 | Stage 4 clustering |
+| Grouping threshold | TBD | Stage 4 clustering - MUST TUNE FIRST |
+| THUMBNAIL | ≤4 | May need adjustment |
+| DERIVATIVE | ≤2 | For same-aspect-ratio resizes |
+| GENERIC_NAME | =0 | Strictest; requires identical hash |
 
-- [ ] Build threshold tuning tool (Stage 2.5) before first grouping run
-- [ ] Sample pairs at each hamming distance level (0, 2, 4, 6, 8, 10, 12)
+- [ ] Build threshold tuning tool (show pairs at each hamming distance)
+- [ ] Sample pairs at levels 0, 2, 4, 6, 8, 10, 12
 - [ ] Determine where "same photo" becomes "different photo"
+
+## Group Rules (Implemented, Need Testing)
+
+Automated rejection (high confidence):
+- IPHOTO_COPY: Prefer Photos.app over iPhoto library
+- THUMBNAIL: Reject thumbnails when larger exists
+- PREVIEW: Reject /Previews/ versions when larger exists
+- DERIVATIVE: Reject same-ratio smaller versions (hamming ≤2)
+
+Human selection detection:
+- GENERIC_NAME: Reject camera-named (IMG_xxx) when human-named identical exists
+- HUMAN_SELECTED: Keep photos with selection signals, reject others
+  - Signals: semantic filename, crop (different aspect ratio), moved-from-siblings
+
+## Rules Needing Visual Verification
+
+- [ ] **rule_thumbnail**: Verify hamming ≤4 threshold
+- [ ] **rule_preview**: Check if filename matching is sufficient
+- [ ] **rule_iphoto_copy**: Get examples - may need tighter matching
+- [ ] **rule_derivative**: Verify hamming ≤2 is safe
+- [ ] **rule_human_selected**: Test semantic name detection, crop detection, moved-from-siblings
 
 ## Exploration Tools (Build When Needed)
 
-- [ ] Threshold tuner UI
-- [ ] Query tool for database exploration
-- [ ] Group browser
-- [ ] Directory structure explorer
+- [ ] Hamming threshold tuner UI
+- [ ] Group browser (view photos grouped by perceptual similarity)
+- [ ] Group rule viewer (like individual rule viewer but for groups)
 
 ## Potential Heuristics to Explore
 
 - [ ] **Directory coherence**: If X% of files in a directory are rejected, reject the rest too
-  - Need to determine threshold (80%? 90%?)
-  - May want to limit to certain rule types (MINECRAFT, SYSTEM_CACHE) not others (TINY_ICON)
-  - Need minimum file count to avoid false positives
-  - Build exploration tool first to see examples of directories where this would apply
+  - Need exploration tool first to see examples
 
 ## After Pipeline Works
 

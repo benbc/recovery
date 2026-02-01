@@ -9,7 +9,7 @@ Build a reproducible pipeline to extract family photos from archived computer co
 1. **Staged pipeline**: Each stage has clear inputs/outputs and can be re-run independently
 2. **Two rule types**: Individual rules (photo properties) vs group rules (relationship to duplicates)
 3. **Three outcomes**: Reject (junk), Separate (handle differently), Accept (keep)
-4. **Preserve information**: Store all source paths, aggregate metadata from duplicates
+4. **Preserve information**: Store all source paths for each photo
 5. **Consolidate logic**: All rules documented and defined in one place per type
 6. **Idempotent stages**: Re-running a stage from scratch produces the same results
 7. **Manual review throughout**: Tools for exploration to refine rules, not just final review
@@ -63,14 +63,12 @@ Build a reproducible pipeline to extract family photos from archived computer co
 ### Stage 5: Group Rejection
 - Apply rules based on relationship to other group members
 - Rules can use hamming distance between specific photos as evidence
-- Ranking for decisions: resolution > file_size > has_exif > path_quality
-- When rejecting, aggregate path info from rejected photo to kept photo(s)
+- Fallback ranking (for hints only): resolution > file_size > has_exif
 - **Output**: `group_rejections` table (photo_id, group_id, rule_name)
 
 ### Stage 6: Export
 - Copy/hardlink accepted photos to organized directory
 - Structure TBD (by date? flat?)
-- Include all aggregated paths as metadata
 - **Output**: Organized photos ready for use
 
 ---
@@ -275,11 +273,13 @@ Tools to create as needs arise during rule development:
 
 ## Design Decisions
 
-- **No confidence score**: Use explicit properties for ranking. Ad-hoc scoring for exploration only.
-- **Duplicate ranking**: resolution > file_size > has_exif > path_quality (calculated on-the-fly)
+- **No confidence score**: Use explicit properties for decisions. Ad-hoc scoring for exploration only.
+- **Fallback ranking**: resolution > file_size > has_exif (for hints only, never for actual decisions)
 - **Hamming distance**: Used for grouping AND as evidence within group rules
-- **Path preservation**: All source paths stored; aggregated from rejected duplicates to kept photos
+- **Path preservation**: All source paths stored with their original photos
 - **Separate vs Reject**: Some photos (father-in-law, Photo Booth) are preserved but handled outside main pipeline
+- **Simple rejection records**: Store (photo_id, rule_name) not "kept in favor of" - reflects actual decision-making
+- **Human selection signals**: Semantic filename, crop, moved-from-siblings indicate curation
 - **Code review**: Keep code clean and clear; flag significant logic changes for discussion; can always modify and re-run
 
 ---
