@@ -285,16 +285,17 @@ def apply_individual_rules(photo: dict) -> Optional[tuple[str, str]]:
     Apply all individual rules to a photo.
 
     Returns (decision, rule_name) or None if no rule matches.
-    Rejection rules are checked first, then separation rules.
+    Separation rules are checked first - if a photo is separated,
+    we don't need to check rejection rules.
     """
-    # Check rejection rules first
-    for rule in REJECTION_RULES:
+    # Check separation rules first
+    for rule in SEPARATION_RULES:
         result = rule(photo)
         if result:
             return result
 
-    # Then separation rules
-    for rule in SEPARATION_RULES:
+    # Then rejection rules
+    for rule in REJECTION_RULES:
         result = rule(photo)
         if result:
             return result

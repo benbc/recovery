@@ -36,6 +36,14 @@ All these thresholds should be tuned together with visual sampling:
 - [ ] Group browser
 - [ ] Directory structure explorer
 
+## Potential Heuristics to Explore
+
+- [ ] **Directory coherence**: If X% of files in a directory are rejected, reject the rest too
+  - Need to determine threshold (80%? 90%?)
+  - May want to limit to certain rule types (MINECRAFT, SYSTEM_CACHE) not others (TINY_ICON)
+  - Need minimum file count to avoid false positives
+  - Build exploration tool first to see examples of directories where this would apply
+
 ## After Pipeline Works
 
 - [ ] Decide export directory structure (by date? flat?)
