@@ -43,7 +43,7 @@ These rules examine a single photo in isolation. Each rule can produce one of tw
 These rules examine a photo in the context of its duplicate group. They use properties
 like resolution, file size, and hamming distance to determine which version to keep.
 
-**Ranking for decisions**: resolution > file_size > has_exif > path_quality
+**Ranking (for reference only)**: resolution > file_size > has_exif
 
 | Rule Name | Condition | Rationale |
 |-----------|-----------|-----------|
@@ -51,9 +51,12 @@ like resolution, file size, and hamming distance to determine which version to k
 | `PREVIEW` | In `/Previews/` when larger file with same filename exists | Keep the original, discard preview |
 | `IPHOTO_COPY` | In `.photolibrary` when same resolution exists in `.photoslibrary` | Prefer newer Photos.app over older iPhoto |
 | `DERIVATIVE` | Smaller resolution with hamming distance ≤2 to larger version | Keep the highest resolution version |
-| `GENERIC_NAME` | Camera-named (IMG_xxx) when human-named pixel-identical exists (hamming=0) | Prefer the renamed version |
 
-Note: `PHOTOBOOTH_FILTERED` was removed - Photo Booth photos are now separated in Stage 2.
+**Rule order**: THUMBNAIL → PREVIEW → IPHOTO_COPY → DERIVATIVE
+
+Each rule only sees photos not yet rejected by earlier rules, so it's never possible to reject all photos in a group.
+
+Note: `GENERIC_NAME` was removed (only matched 2 groups). `PHOTOBOOTH_FILTERED` was removed - Photo Booth photos are now separated in Stage 2. `HUMAN_SELECTED` was removed - it incorrectly rejected originals when groups contained similar-but-different photos.
 
 ## Hamming Distance Usage
 

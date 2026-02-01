@@ -30,6 +30,9 @@ dHash useful as secondary signal in pHash borderline cases:
 ### Cropping detection (FUTURE)
 Anticipate dHash helping with crop detection, but haven't seen enough evidence yet. Plan to review groups after Stage 4 and try to include dHash in automated resolution logic for Stage 5.
 
+**Observed crops during rule verification:**
+- Group #13: contains a crop
+
 ## Group Rules (Implemented, Need Testing)
 
 Automated rejection (high confidence):

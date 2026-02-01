@@ -210,6 +210,7 @@ def rule_system_cache(photo: dict) -> Optional[tuple[str, str]]:
         "/temp/",
         "/.Trash/",
         "/Trash/",
+        "/.Trashes/",  # macOS trash on external volumes
     ]
     for pattern in cache_patterns:
         if _any_path_matches(photo, pattern):
@@ -231,6 +232,38 @@ def rule_flip_video_thumb(photo: dict) -> Optional[tuple[str, str]]:
     for pattern in flip_patterns:
         if _any_path_matches(photo, pattern):
             return ("reject", "FLIP_VIDEO_THUMB")
+    return None
+
+
+def rule_video_thumbnail(photo: dict) -> Optional[tuple[str, str]]:
+    """
+    VIDEO_THUMBNAIL: Reject video thumbnail images.
+
+    Conditions:
+    - Filename starts with MVI_ (iPhoto/Photos video preview)
+    - Filename ends with .THM (camera video thumbnail)
+    Rationale: Auto-generated video preview images, not actual photos
+    """
+    for path in _get_paths(photo):
+        filename = Path(path).name.upper()
+        # MVI_ prefix (video preview from iPhoto/Photos)
+        if filename.startswith("MVI_"):
+            return ("reject", "VIDEO_THUMBNAIL")
+        # .THM extension (camera video thumbnail)
+        if filename.endswith(".THM"):
+            return ("reject", "VIDEO_THUMBNAIL")
+    return None
+
+
+def rule_app_resource(photo: dict) -> Optional[tuple[str, str]]:
+    """
+    APP_RESOURCE: Reject images from macOS application bundles.
+
+    Condition: path contains .app/Contents/
+    Rationale: Application resources (icons, logos), not personal photos
+    """
+    if _any_path_matches(photo, ".app/Contents/"):
+        return ("reject", "APP_RESOURCE")
     return None
 
 
@@ -287,6 +320,8 @@ REJECTION_RULES: list[RuleFunc] = [
     rule_stock_greeting,
     rule_flag_icon,
     rule_flip_video_thumb,
+    rule_video_thumbnail,
+    rule_app_resource,
     # Size-based rules (catch-all, should be last)
     rule_tiny_icon,
 ]
