@@ -10,7 +10,8 @@ mkdir -p output/logs
 
 # Generate log filename from arguments
 # e.g., --stage 2 -> stage_2, --from-stage 3 -> from-stage_3
-log_name=$(echo "$@" | tr ' ' '_' | tr -d '-')
+# Replace slashes and other problematic chars
+log_name=$(echo "$@" | tr ' /' '_' | tr -d '-' | sed 's/__*/_/g')
 if [ -z "$log_name" ]; then
     log_name="status"
 fi

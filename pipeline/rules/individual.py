@@ -77,13 +77,13 @@ def rule_minecraft_texture(photo: dict) -> Optional[tuple[str, str]]:
 
 def rule_hue_animation(photo: dict) -> Optional[tuple[str, str]]:
     """
-    HUE_ANIMATION: Reject HUE stop-motion animation frames.
+    HUE_ANIMATION: Separate HUE stop-motion animation frames.
 
     Condition: path contains 'HUE Animation'
-    Rationale: Animation software frames, not personal photos
+    Rationale: Animation software frames - kids might want these someday
     """
     if _any_path_matches(photo, "HUE Animation"):
-        return ("reject", "HUE_ANIMATION")
+        return ("separate", "HUE_ANIMATION")
     return None
 
 
@@ -126,40 +126,50 @@ def rule_web_asset(photo: dict) -> Optional[tuple[str, str]]:
 
 def rule_face_crop(photo: dict) -> Optional[tuple[str, str]]:
     """
-    FACE_CROP: Reject Photos.app face detection crops.
+    FACE_CROP: Reject Photos.app/iPhoto face detection crops.
 
-    Condition: in /modelresources/, square, max dimension <= 500px
+    Conditions (any of):
+    - in /modelresources/, square, max dimension <= 500px
+    - filename contains _face (e.g., IMG_0802_face2.jpg)
     Rationale: Auto-generated face thumbnails for recognition
     """
-    if not _any_path_matches(photo, "/modelresources/"):
-        return None
-
     width = photo.get("width") or 0
     height = photo.get("height") or 0
 
-    # Must be small (max dimension <= 500px)
-    if max(width, height) > 500:
-        return None
+    # Check for _face in filename (iPhoto style)
+    for path in _get_paths(photo):
+        filename = Path(path).stem
+        if "_face" in filename.lower():
+            return ("reject", "FACE_CROP")
 
-    # Must be roughly square (within 10%)
-    if width == 0 or height == 0:
-        return None
-    aspect = width / height
-    if abs(aspect - 1.0) > 0.1:
-        return None
+    # Check for modelresources path (Photos.app style)
+    if _any_path_matches(photo, "/modelresources/"):
+        # Must be small (max dimension <= 500px)
+        if max(width, height) > 500:
+            return None
 
-    return ("reject", "FACE_CROP")
+        # Must be roughly square (within 10%)
+        if width == 0 or height == 0:
+            return None
+        aspect = width / height
+        if abs(aspect - 1.0) > 0.1:
+            return None
+
+        return ("reject", "FACE_CROP")
+
+    return None
 
 
 def rule_stock_greeting(photo: dict) -> Optional[tuple[str, str]]:
     """
     STOCK_GREETING: Reject stock greeting card template images.
 
-    Condition: 3-digit filename in /Thumbnails/ path
-    Rationale: Built-in greeting card templates, not personal photos
+    Condition: 3-digit filename in specific timestamp folder
+    Rationale: Built-in greeting card templates imported at that exact time
     """
     for path in _get_paths(photo):
-        if "/thumbnails/" not in path.lower():
+        # Must be in the specific timestamp folder
+        if "20140223-155504" not in path:
             continue
 
         filename = Path(path).stem
@@ -200,8 +210,6 @@ def rule_system_cache(photo: dict) -> Optional[tuple[str, str]]:
         "/temp/",
         "/.Trash/",
         "/Trash/",
-        # Note: FlipShare handled by rule_flip_video_thumb
-        "/My Flip Video Prefs/",
     ]
     for pattern in cache_patterns:
         if _any_path_matches(photo, pattern):
@@ -211,13 +219,18 @@ def rule_system_cache(photo: dict) -> Optional[tuple[str, str]]:
 
 def rule_flip_video_thumb(photo: dict) -> Optional[tuple[str, str]]:
     """
-    FLIP_VIDEO_THUMB: Reject FlipShare video preview thumbnails.
+    FLIP_VIDEO_THUMB: Reject FlipShare/Flip Video thumbnails.
 
-    Condition: in FlipShare Data/Previews/ path
+    Condition: in FlipShare or Flip Video Prefs paths
     Rationale: Auto-generated video previews
     """
-    if _any_path_matches(photo, "/FlipShare Data/Previews/"):
-        return ("reject", "FLIP_VIDEO_THUMB")
+    flip_patterns = [
+        "/FlipShare Data/Previews/",
+        "/My Flip Video Prefs/",
+    ]
+    for pattern in flip_patterns:
+        if _any_path_matches(photo, pattern):
+            return ("reject", "FLIP_VIDEO_THUMB")
     return None
 
 
@@ -257,23 +270,25 @@ def rule_photobooth(photo: dict) -> Optional[tuple[str, str]]:
 # =============================================================================
 
 # Rejection rules - applied in order, first match wins
+# Path-based rules first (specific), size-based rules last (generic)
 REJECTION_RULES: list[RuleFunc] = [
-    rule_tiny_icon,
+    # Path-based rules
     rule_minecraft_texture,
-    rule_hue_animation,
     rule_ichat_icon,
     rule_web_asset,
     rule_face_crop,
     rule_stock_greeting,
     rule_flag_icon,
-    rule_system_cache,
     rule_flip_video_thumb,
+    # Size-based rules (catch-all, should be last)
+    rule_tiny_icon,
 ]
 
 # Separation rules - applied in order, first match wins
 SEPARATION_RULES: list[RuleFunc] = [
     rule_father_in_law,
     rule_photobooth,
+    rule_hue_animation,
 ]
 
 # All individual rules
