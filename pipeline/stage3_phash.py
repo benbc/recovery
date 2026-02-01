@@ -1,12 +1,12 @@
 """
 Stage 3: Perceptual Hash
 
-Compute imagehash.phash() for photos not rejected/separated.
+Compute perceptual hashes (pHash and dHash) for photos not rejected/separated.
 Skip classified photos entirely (save time on expensive operation).
 Resumable: skip photos that already have hashes.
 Can import valid hashes from old database.
 
-Output: `perceptual_hash` column populated
+Output: `perceptual_hash` and `dhash` columns populated
 """
 
 import sqlite3
@@ -20,7 +20,7 @@ from .database import (
     get_photos_for_phash,
     record_stage_completion,
 )
-from .utils.hashing import compute_perceptual_hash
+from .utils.hashing import compute_hashes
 
 
 def import_hashes_from_old_db(old_db_path: Path) -> None:
@@ -103,8 +103,8 @@ def run_stage3(import_from: Path = None, clear_existing: bool = False) -> None:
 
     with get_connection() as conn:
         if clear_existing:
-            print("Clearing existing perceptual hashes...")
-            conn.execute("UPDATE photos SET perceptual_hash = NULL")
+            print("Clearing existing hashes...")
+            conn.execute("UPDATE photos SET perceptual_hash = NULL, dhash = NULL")
             conn.commit()
 
         # Import from old database if specified
@@ -132,18 +132,19 @@ def run_stage3(import_from: Path = None, clear_existing: bool = False) -> None:
         batch = []
 
         # Compute hashes
-        for photo in tqdm(photos, desc="Computing perceptual hashes"):
+        for photo in tqdm(photos, desc="Computing hashes"):
             source_path = Path(photo["source_path"])
 
             if not source_path.exists():
                 errors += 1
                 continue
 
-            phash = compute_perceptual_hash(source_path)
-            if phash:
+            phash, dhash = compute_hashes(source_path)
+            if phash and dhash:
                 batch.append({
                     "id": photo["id"],
                     "perceptual_hash": phash,
+                    "dhash": dhash,
                 })
                 computed += 1
             else:
@@ -152,7 +153,7 @@ def run_stage3(import_from: Path = None, clear_existing: bool = False) -> None:
             # Flush batch periodically
             if len(batch) >= BATCH_SIZE:
                 conn.executemany(
-                    "UPDATE photos SET perceptual_hash = :perceptual_hash WHERE id = :id",
+                    "UPDATE photos SET perceptual_hash = :perceptual_hash, dhash = :dhash WHERE id = :id",
                     batch,
                 )
                 conn.commit()
@@ -161,7 +162,7 @@ def run_stage3(import_from: Path = None, clear_existing: bool = False) -> None:
         # Final batch
         if batch:
             conn.executemany(
-                "UPDATE photos SET perceptual_hash = :perceptual_hash WHERE id = :id",
+                "UPDATE photos SET perceptual_hash = :perceptual_hash, dhash = :dhash WHERE id = :id",
                 batch,
             )
             conn.commit()

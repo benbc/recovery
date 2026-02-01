@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS photos (
     date_taken DATETIME,
     date_source TEXT,              -- 'exif', 'filename', 'mtime'
     has_exif BOOLEAN DEFAULT 0,    -- Has any EXIF data
-    perceptual_hash TEXT,          -- Computed in Stage 3
+    perceptual_hash TEXT,          -- pHash, computed in Stage 3
+    dhash TEXT,                    -- dHash, computed in Stage 3
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -86,6 +87,13 @@ def init_db(db_path: Path = DB_PATH) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
+
+    # Migration: add dhash column if missing
+    try:
+        conn.execute("ALTER TABLE photos ADD COLUMN dhash TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
     conn.commit()
     conn.close()
 
@@ -164,13 +172,13 @@ def get_photos_without_decision(conn: sqlite3.Connection) -> list[dict]:
 
 
 def get_photos_for_phash(conn: sqlite3.Connection) -> list[dict]:
-    """Get photos that need perceptual hashing (not rejected/separated, no hash yet)."""
+    """Get photos that need hashing (not rejected/separated, missing pHash or dHash)."""
     cursor = conn.execute("""
         SELECT p.id, pp.source_path
         FROM photos p
         JOIN photo_paths pp ON p.id = pp.photo_id
         LEFT JOIN individual_decisions d ON p.id = d.photo_id
-        WHERE p.perceptual_hash IS NULL
+        WHERE (p.perceptual_hash IS NULL OR p.dhash IS NULL)
         AND d.photo_id IS NULL
         GROUP BY p.id
     """)
