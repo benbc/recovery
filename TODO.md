@@ -64,9 +64,7 @@ Human selection detection:
 
 ## Issues to Investigate
 
-- [ ] **FATHER_IN_LAW rule incomplete**: Found photos that should be in father-in-law batch but weren't separated. Review rule pattern.
-  - pHash f7ebe0ce9c1c0d80 and b7ebe0ce9c1c0d90
-  - pHash d5d5b8aa2a6a6255 and 9b3ce0c30f6c831f
+- [x] **FATHER_IN_LAW rule incomplete**: Fixed - expanded to include `/Thumbnails/2013/03/03/` and `/Tor's childhood/` paths. Re-run Stage 2 to apply.
 - [ ] **pHash aberrations to investigate**:
   - Distance 6: a6a4d859592ba7e4 and a6a6dc59190ba7d4 are completely different photos
   - Distance 10: c63179ce077ae027 and e63171ce47c3c227 are different photos

@@ -242,10 +242,17 @@ def rule_father_in_law(photo: dict) -> Optional[tuple[str, str]]:
     """
     FATHER_IN_LAW: Separate father-in-law's digitized collection.
 
-    Condition: path matches %/tor/Pictures/2013/03/03/%
+    Condition: path matches any of:
+      - /tor/Pictures/2013/03/03/ (originals and archive copies)
+      - /Thumbnails/2013/03/03/ (iPhoto thumbnails of same)
+      - /Tor's childhood/ (another copy location)
     Rationale: Separate digitized collection, needs different handling
     """
     if _any_path_regex(photo, r"/tor/Pictures/2013/03/03/"):
+        return ("separate", "FATHER_IN_LAW")
+    if _any_path_regex(photo, r"/Thumbnails/2013/03/03/"):
+        return ("separate", "FATHER_IN_LAW")
+    if _any_path_matches(photo, "/Tor's childhood/"):
         return ("separate", "FATHER_IN_LAW")
     return None
 

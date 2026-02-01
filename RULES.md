@@ -35,7 +35,7 @@ These rules examine a single photo in isolation. Each rule can produce one of tw
 
 | Rule Name | Condition | Rationale |
 |-----------|-----------|-----------|
-| `FATHER_IN_LAW` | path matches `/tor/Pictures/2013/03/03/` | Separate digitized collection needing different handling |
+| `FATHER_IN_LAW` | path matches `/tor/Pictures/2013/03/03/` or `/Thumbnails/2013/03/03/` or `/Tor's childhood/` | Separate digitized collection needing different handling |
 | `PHOTOBOOTH` | path matches `Photo Booth Library/Originals/` or `Photo Booth Library/Pictures/` | Needs manual curation; separating both paths keeps them out of duplicate groups |
 
 ## Group Rules (Stage 5)
