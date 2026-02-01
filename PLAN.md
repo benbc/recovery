@@ -55,10 +55,15 @@ Build a reproducible pipeline to extract family photos from archived computer co
 - **Output**: `perceptual_hash` column populated
 
 ### Stage 4: Group Duplicates
-- Cluster photos by perceptual hash similarity (hamming distance <= threshold)
-- Use union-find algorithm
+- Cluster photos by perceptual hash similarity (combined pHash/dHash thresholds)
+- Use complete-linkage clustering to avoid "chaining" dissimilar photos
 - Store group membership only (ranking calculated on-the-fly when needed)
-- **Output**: `duplicate_groups` table (photo_id, group_id)
+- **Output**: `duplicate_groups` table, `unlinked_pairs` table
+
+### Stage 4b: Merge Bridge-Connected Groups
+- Merge groups that have many "bridges" (pairs satisfying threshold) between them
+- These are groups split due to outliers but likely represent the same scene
+- **Output**: Updated `duplicate_groups` table
 
 ### Stage 5: Group Rejection
 - Apply rules based on relationship to other group members
@@ -86,7 +91,8 @@ CREATE TABLE photos (
     date_taken DATETIME,
     date_source TEXT,              -- 'exif', 'filename', 'mtime'
     has_exif BOOLEAN DEFAULT 0,    -- Has any EXIF data
-    perceptual_hash TEXT,          -- Computed in Stage 3
+    perceptual_hash TEXT,          -- pHash, computed in Stage 3
+    dhash TEXT,                    -- dHash, computed in Stage 3
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -144,7 +150,6 @@ These classify photos based on properties alone, without knowing about duplicate
 |-----------|-----------|-----------|
 | `TINY_ICON` | width * height < 5000 | Too small to be a real photo |
 | `MINECRAFT_TEXTURE` | path contains minecraft patterns | Game assets |
-| `HUE_ANIMATION` | path matches HUE stop-motion folders | Animation frames |
 | `ICHAT_ICON` | path contains iChat/Messages icon folders | Chat app assets |
 | `WEB_ASSET` | companion .htm file exists | Saved web page |
 | `FACE_CROP` | in modelresources/, square, <=500px | Photos.app face detection |
@@ -157,7 +162,8 @@ These classify photos based on properties alone, without knowing about duplicate
 | Rule Name | Condition | Rationale |
 |-----------|-----------|-----------|
 | `FATHER_IN_LAW` | path matches `%/tor/Pictures/2013/03/03/%` | Digitized collection, different handling |
-| `PHOTOBOOTH_ORIGINAL` | path matches `Photo Booth Library/Originals/` | Manual curation needed |
+| `PHOTOBOOTH` | path matches `Photo Booth Library/` (Originals or Pictures) | Manual curation needed |
+| `HUE_ANIMATION` | path matches HUE stop-motion folders | Animation frames (kids might want) |
 
 ### Group Rules (Stage 5)
 
@@ -169,7 +175,6 @@ Rules can use hamming distance as evidence (close = definitely same, threshold =
 | `THUMBNAIL` | smaller version when larger exists, close hamming distance | Keep original |
 | `PREVIEW` | in /Previews/ when larger version exists | Keep original |
 | `IPHOTO_COPY` | in .photolibrary when same in .photoslibrary | Prefer newer app |
-| `PHOTOBOOTH_FILTERED` | filtered version when /Originals/ exists | Keep original |
 | `DERIVATIVE` | resized version of identical content | Keep largest |
 | `GENERIC_NAME` | IMG_xxx when human-named pixel-identical exists | Prefer named |
 
@@ -198,8 +203,10 @@ recovery/
 │       ├── __init__.py
 │       ├── metadata.py        # EXIF extraction, date parsing
 │       └── hashing.py         # SHA256, perceptual hash
-├── tools/                     # Built as needed
-│   └── (exploration tools created on demand)
+├── tools/                     # Exploration/tuning UIs
+│   ├── threshold_tuner.py    # Sample pairs at each hamming distance
+│   ├── group_viewer.py       # Browse duplicate groups
+│   └── ...
 ├── run_pipeline.py            # Main entry point
 ├── output/                    # Output directory
 │   ├── photos.db             # SQLite database
@@ -265,7 +272,6 @@ Tools to create as needs arise during rule development:
 
 ## Known Rule Issues to Address
 
-- **FACE_CROP**: Current threshold is 200px, needs to be ~500px (480x480 crops exist)
 - **FLAG_ICON**: Known incomplete, review when implementing
 - **Directory coherence**: Consider using sibling file characteristics as evidence (exploration tool first)
 

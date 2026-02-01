@@ -22,7 +22,6 @@ These rules examine a single photo in isolation. Each rule can produce one of tw
 |-----------|-----------|-----------|
 | `TINY_ICON` | width × height < 5,000 pixels | Too small to be a real photo (icons, emoji, UI elements) |
 | `MINECRAFT_TEXTURE` | path contains "minecraft" | Game textures, not personal photos |
-| `HUE_ANIMATION` | path contains "HUE Animation" | Animation software frames, not personal photos |
 | `ICHAT_ICON` | path contains chat app folders + small size | Chat app emoticons and icons |
 | `WEB_ASSET` | in `*_files/` directory with companion .htm file | Browser-saved web page assets |
 | `FACE_CROP` | in `/modelresources/`, square, ≤500px | Photos.app face detection thumbnails |
@@ -37,6 +36,7 @@ These rules examine a single photo in isolation. Each rule can produce one of tw
 |-----------|-----------|-----------|
 | `FATHER_IN_LAW` | path matches `/tor/Pictures/2013/03/03/` or `/Thumbnails/2013/03/03/` or `/Tor's childhood/` | Separate digitized collection needing different handling |
 | `PHOTOBOOTH` | path matches `Photo Booth Library/Originals/` or `Photo Booth Library/Pictures/` | Needs manual curation; separating both paths keeps them out of duplicate groups |
+| `HUE_ANIMATION` | path contains "HUE Animation" | Animation software frames - kids might want these someday |
 
 ## Group Rules (Stage 5)
 
@@ -128,10 +128,10 @@ def rule_tiny_icon(photo: dict) -> Optional[tuple[str, str]]:
 ### Group Rules
 
 Rules are defined in `pipeline/rules/group.py`. Each rule is a function that takes
-a list of group member dicts and returns a list of `(rejected_id, kept_id, rule_name)` tuples.
+a list of group member dicts and returns a list of `(rejected_id, rule_name)` tuples.
 
 ```python
-def rule_thumbnail(group: list[dict]) -> list[tuple[str, str, str]]:
+def rule_thumbnail(group: list[dict]) -> list[tuple[str, str]]:
     # Compare thumbnails to masters, return rejections
     ...
 ```

@@ -45,16 +45,18 @@ Human selection detection:
 
 ## Rules Needing Visual Verification
 
-- [ ] **rule_thumbnail**: Verify hamming ≤4 threshold
+- [ ] **rule_thumbnail**: Verify `is_same_photo()` threshold (pHash ≤2, or pHash ≤6 with dHash=0)
 - [ ] **rule_preview**: Check if filename matching is sufficient
 - [ ] **rule_iphoto_copy**: Get examples - may need tighter matching
-- [ ] **rule_derivative**: Verify hamming ≤2 is safe
+- [ ] **rule_derivative**: Verify `is_same_photo()` threshold (pHash ≤2, or pHash ≤6 with dHash=0)
 - [ ] **rule_human_selected**: Test semantic name detection, crop detection, moved-from-siblings
 
-## Exploration Tools (Build When Needed)
+## Exploration Tools
 
-- [ ] Hamming threshold tuner UI
-- [ ] Group browser (view photos grouped by perceptual similarity)
+- [x] Hamming threshold tuner UI (`tools/threshold_tuner.py`)
+- [x] Group browser (`tools/group_viewer.py`)
+- [x] Unlinked pairs viewer (`tools/unlinked_viewer.py`)
+- [x] Bridge viewer (`tools/bridge_viewer.py`)
 - [ ] Group rule viewer (like individual rule viewer but for groups)
 
 ## Potential Heuristics to Explore
