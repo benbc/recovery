@@ -36,7 +36,7 @@ from .database import (
     get_photos_for_grouping,
     record_stage_completion,
 )
-from .utils.hashing import hamming_distance
+from .utils.hashing import hamming_distance, is_same_scene
 
 
 def should_group(phash_dist: int, dhash_dist: int) -> bool:
@@ -44,19 +44,9 @@ def should_group(phash_dist: int, dhash_dist: int) -> bool:
     Determine if two photos should be grouped based on combined pHash/dHash thresholds.
 
     Returns True if the photos should be in the same group.
+    Delegates to is_same_scene() - see utils/hashing.py for threshold details.
     """
-    if phash_dist <= PHASH_SAFE_GROUP:
-        # pHash ≤10: reliable same scene
-        return True
-    elif phash_dist <= PHASH_BORDERLINE_12:
-        # pHash 11-12: group unless dHash strongly disagrees
-        return dhash_dist < DHASH_EXCLUDE_AT_12
-    elif phash_dist <= PHASH_BORDERLINE_14:
-        # pHash 13-14: only group if dHash confirms
-        return dhash_dist <= DHASH_INCLUDE_AT_14
-    else:
-        # pHash >14: don't group
-        return False
+    return is_same_scene(phash_dist, dhash_dist)
 
 
 def find_connected_components(edges: list[tuple[int, int]], n: int) -> list[set[int]]:

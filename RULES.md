@@ -142,19 +142,26 @@ def rule_thumbnail(group: list[dict]) -> list[tuple[str, str, str]]:
 - **FLAG_ICON**: Uses hardcoded folder name; may need expansion for other flag collections
 - **Directory coherence**: Consider using sibling file characteristics as evidence (build exploration tool first)
 
-## Rules Needing Verification/Tuning
+## Implementation: Hash Comparison Helpers
 
-These rules have hamming distance thresholds that need verification with visual examples:
+All hash comparisons use the helper functions in `pipeline/utils/hashing.py`:
+
+| Function | Use Case | Criteria |
+|----------|----------|----------|
+| `is_same_photo()` | DERIVATIVE, THUMBNAIL rules | pHash ≤2, OR (pHash ≤6 AND dHash=0) |
+| `is_same_scene()` | Grouping (Stage 4) | See combined thresholds above |
+
+These helpers ensure consistent threshold application throughout the codebase.
+
+## Rules Needing Verification/Tuning
 
 | Rule | Current Threshold | Notes |
 |------|------------------|-------|
-| `THUMBNAIL` | hamming ≤ 4 | May need to be lower; needs examples |
-| `PREVIEW` | filename match only | May need hamming distance check like THUMBNAIL |
-| `IPHOTO_COPY` | resolution match only | May need hamming distance or name matching; needs examples |
-| `DERIVATIVE` | hamming ≤ 2 | Was previously identical hash; verify this is safe |
-| `GENERIC_NAME` | hamming = 0 | Strictest threshold; may be correct for pixel-identical |
-
-All thresholds should be tuned together with a visual sampling tool.
+| `THUMBNAIL` | `is_same_photo()` | Now uses consistent "same photo" check |
+| `PREVIEW` | filename match only | May need `is_same_photo()` check |
+| `IPHOTO_COPY` | resolution match only | May need `is_same_photo()` check |
+| `DERIVATIVE` | `is_same_photo()` | Now uses consistent "same photo" check |
+| `GENERIC_NAME` | pHash = 0 | Strictest threshold for pixel-identical |
 
 ## Adding New Rules
 

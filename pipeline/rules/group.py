@@ -19,7 +19,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Callable, Optional
 
-from ..utils.hashing import hamming_distance
+from ..utils.hashing import hamming_distance, is_same_photo
 
 
 # Type alias for group rule functions
@@ -260,11 +260,9 @@ def rule_thumbnail(group: list[dict]) -> list[tuple[str, str]]:
 
     For each thumbnail, checks if ANY master exists that is BOTH:
     1. Higher resolution than the thumbnail
-    2. Low hamming distance (very similar) to this specific thumbnail
+    2. Same photo (using is_same_photo threshold)
 
     This handles groups with multiple unrelated photos correctly.
-
-    TODO: Hamming threshold (currently 4) needs tuning with visual examples.
     """
     rejections = []
 
@@ -277,23 +275,26 @@ def rule_thumbnail(group: list[dict]) -> list[tuple[str, str]]:
 
     for thumb in thumbnails:
         thumb_res = _resolution(thumb)
-        thumb_hash = thumb.get("perceptual_hash")
+        thumb_phash = thumb.get("perceptual_hash")
+        thumb_dhash = thumb.get("dhash")
 
-        if not thumb_hash:
+        if not thumb_phash or not thumb_dhash:
             continue
 
-        # Check if ANY master is larger and similar
+        # Check if ANY master is larger and same photo
         for master in masters:
             master_res = _resolution(master)
-            master_hash = master.get("perceptual_hash")
+            master_phash = master.get("perceptual_hash")
+            master_dhash = master.get("dhash")
 
-            if not master_hash:
+            if not master_phash or not master_dhash:
                 continue
 
-            # Must be larger and similar
+            # Must be larger and same photo
             if master_res > thumb_res:
-                dist = hamming_distance(thumb_hash, master_hash)
-                if dist <= 4:  # TODO: tune this threshold
+                phash_dist = hamming_distance(thumb_phash, master_phash)
+                dhash_dist = hamming_distance(thumb_dhash, master_dhash)
+                if is_same_photo(phash_dist, dhash_dist):
                     rejections.append((thumb["id"], "THUMBNAIL"))
                     break  # Only reject once
 
@@ -379,8 +380,8 @@ def rule_derivative(group: list[dict]) -> list[tuple[str, str]]:
     """
     DERIVATIVE: Reject resized versions of identical content.
 
-    When a smaller photo is very similar (hamming <= 2) to a larger one,
-    reject the smaller one as a derivative.
+    When a smaller photo is the same photo (using is_same_photo threshold)
+    as a larger one, reject the smaller one as a derivative.
     """
     rejections = []
 
@@ -389,28 +390,31 @@ def rule_derivative(group: list[dict]) -> list[tuple[str, str]]:
 
     for photo in group:
         photo_res = _resolution(photo)
-        photo_hash = photo.get("perceptual_hash")
+        photo_phash = photo.get("perceptual_hash")
+        photo_dhash = photo.get("dhash")
 
-        if not photo_hash:
+        if not photo_phash or not photo_dhash:
             continue
 
-        # Check if ANY larger photo is very similar
+        # Check if ANY larger photo is the same photo
         for other in group:
             if other["id"] == photo["id"]:
                 continue
 
             other_res = _resolution(other)
-            other_hash = other.get("perceptual_hash")
+            other_phash = other.get("perceptual_hash")
+            other_dhash = other.get("dhash")
 
-            if not other_hash:
+            if not other_phash or not other_dhash:
                 continue
 
             # Other must be significantly larger
             if other_res <= photo_res or photo_res >= other_res * 0.9:
                 continue
 
-            dist = hamming_distance(photo_hash, other_hash)
-            if dist <= 2:
+            phash_dist = hamming_distance(photo_phash, other_phash)
+            dhash_dist = hamming_distance(photo_dhash, other_dhash)
+            if is_same_photo(phash_dist, dhash_dist):
                 rejections.append((photo["id"], "DERIVATIVE"))
                 break  # Only reject once
 
