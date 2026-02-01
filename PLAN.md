@@ -25,6 +25,14 @@ Build a reproducible pipeline to extract family photos from archived computer co
 - Store ALL source paths for each unique hash (don't lose path info from duplicates)
 - **Output**: `photos` table + `photo_paths` table
 
+### Stage 1b: Link Files
+- Create hardlinks to all photos in a simple directory structure
+- Structure: `files/{hash[0:2]}/{hash}.{ext}` (256 subdirectories)
+- Benefits:
+  1. Simple paths for serving files during analysis
+  2. Safety: original files are never touched after this stage
+- **Output**: `files/` directory with hardlinks
+
 ### Stage 2: Individual Classification
 - Apply rules based on photo's own properties (path, size, dimensions, filename)
 - Rules are functions that examine one photo in isolation
@@ -186,6 +194,7 @@ recovery/
 │   ├── config.py              # Paths, thresholds, constants
 │   ├── database.py            # Schema, connection, utilities
 │   ├── stage1_scan.py         # Scan & extract
+│   ├── stage1b_link.py        # Create hardlinks to files
 │   ├── stage2_individual.py   # Individual classification
 │   ├── stage3_phash.py        # Perceptual hashing
 │   ├── stage4_group.py        # Duplicate grouping
@@ -202,10 +211,15 @@ recovery/
 ├── tools/                     # Built as needed
 │   └── (exploration tools created on demand)
 ├── run_pipeline.py            # Main entry point
-├── organized/                 # Output directory
+├── output/                    # Output directory
 │   ├── photos.db             # SQLite database
-│   └── images/               # Exported photos
-└── RULES.md                  # Human-readable rule documentation
+│   ├── files/                # Hardlinks to source photos (Stage 1b)
+│   ├── exported/             # Final exported photos (Stage 6)
+│   └── logs/                 # Pipeline run logs
+├── CLAUDE.md                 # Instructions for Claude
+├── PLAN.md                   # This file - architecture plan
+├── RULES.md                  # Human-readable rule documentation
+└── TODO.md                   # Current work items
 ```
 
 ---

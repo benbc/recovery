@@ -1,0 +1,23 @@
+#!/bin/bash
+# Wrapper script for run_pipeline.py
+# - Sets unbuffered output so logs capture everything
+# - Tees output to timestamped log file
+
+set -e
+
+# Create logs directory if needed
+mkdir -p output/logs
+
+# Generate log filename from arguments
+# e.g., --stage 2 -> stage_2, --from-stage 3 -> from-stage_3
+log_name=$(echo "$@" | tr ' ' '_' | tr -d '-')
+if [ -z "$log_name" ]; then
+    log_name="status"
+fi
+log_file="output/logs/${log_name}_$(date +%Y%m%d_%H%M%S).log"
+
+echo "Logging to: $log_file"
+echo
+
+# Run with unbuffered output, tee to log file
+PYTHONUNBUFFERED=1 ./run_pipeline.py "$@" 2>&1 | tee "$log_file"

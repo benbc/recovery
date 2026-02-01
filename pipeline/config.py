@@ -11,6 +11,9 @@ OUTPUT_ROOT = Path("/home/ben/src/benbc/recovery/output")
 # Database path
 DB_PATH = OUTPUT_ROOT / "photos.db"
 
+# Directory for linked files (hardlinks to originals, simple paths for serving)
+FILES_DIR = OUTPUT_ROOT / "files"
+
 # Directory for exported photos
 EXPORT_DIR = OUTPUT_ROOT / "exported"
 
@@ -22,17 +25,19 @@ OLD_DB_PATH = Path("/home/ben/src/benbc/recovery/archive/organized/photos.db")
 # Lower = stricter (fewer false positives), Higher = more inclusive
 HAMMING_THRESHOLD = 8
 
-# Image MIME types to process
-IMAGE_MIME_TYPES = {
-    "image/jpeg",
-    "image/png",
-    "image/gif",
-    "image/bmp",
-    "image/tiff",
-    "image/webp",
-    "image/heic",
-    "image/heif",
+# Image MIME types to process, with their file extensions
+MIME_TO_EXT = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/bmp": ".bmp",
+    "image/tiff": ".tiff",
+    "image/webp": ".webp",
+    "image/heic": ".heic",
+    "image/heif": ".heif",
 }
+
+IMAGE_MIME_TYPES = set(MIME_TO_EXT.keys())
 
 # Files to always skip
 EXCLUDE_FILENAMES = {".DS_Store", "Thumbs.db", "desktop.ini", ".picasa.ini"}

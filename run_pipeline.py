@@ -36,8 +36,12 @@ import argparse
 import sys
 from pathlib import Path
 
-from pipeline.config import DB_PATH, HAMMING_THRESHOLD, SOURCE_ROOT, EXPORT_DIR, OLD_DB_PATH
+from pipeline.config import DB_PATH, HAMMING_THRESHOLD, SOURCE_ROOT, EXPORT_DIR, OLD_DB_PATH, FILES_DIR
 from pipeline.database import get_connection, init_db
+
+
+# Stage order for --from-stage
+STAGE_ORDER = ["1", "1b", "2", "3", "4", "5", "6"]
 
 
 def show_status():
@@ -141,36 +145,43 @@ def show_status():
     print()
 
 
-def run_stage(stage: int, args: argparse.Namespace):
+def run_stage(stage: str, args: argparse.Namespace):
     """Run a specific stage."""
-    if stage == 1:
+    if stage == "1":
         from pipeline.stage1_scan import run_stage1
         run_stage1(
             source_root=Path(args.source) if args.source else SOURCE_ROOT,
             clear_existing=args.clear
         )
 
-    elif stage == 2:
+    elif stage == "1b":
+        from pipeline.stage1b_link import run_stage1b
+        run_stage1b(
+            files_dir=FILES_DIR,
+            clear_existing=args.clear
+        )
+
+    elif stage == "2":
         from pipeline.stage2_individual import run_stage2
         run_stage2(clear_existing=args.clear)
 
-    elif stage == 3:
+    elif stage == "3":
         from pipeline.stage3_phash import run_stage3
         import_from = Path(args.import_hashes) if args.import_hashes else None
         run_stage3(import_from=import_from, clear_existing=args.clear)
 
-    elif stage == 4:
+    elif stage == "4":
         from pipeline.stage4_group import run_stage4
         run_stage4(
             threshold=args.threshold or HAMMING_THRESHOLD,
             clear_existing=args.clear
         )
 
-    elif stage == 5:
+    elif stage == "5":
         from pipeline.stage5_group_reject import run_stage5
         run_stage5(clear_existing=args.clear)
 
-    elif stage == 6:
+    elif stage == "6":
         from pipeline.stage6_export import run_stage6
         run_stage6(
             export_dir=Path(args.export_dir) if args.export_dir else EXPORT_DIR,
@@ -193,11 +204,11 @@ def main():
     # Stage selection (mutually exclusive)
     stage_group = parser.add_mutually_exclusive_group()
     stage_group.add_argument(
-        "--stage", type=int, choices=[1, 2, 3, 4, 5, 6],
+        "--stage", type=str, choices=STAGE_ORDER,
         help="Run a single stage"
     )
     stage_group.add_argument(
-        "--from-stage", type=int, choices=[1, 2, 3, 4, 5, 6],
+        "--from-stage", type=str, choices=STAGE_ORDER,
         help="Run from this stage to the end"
     )
     stage_group.add_argument(
@@ -254,7 +265,8 @@ def main():
         run_stage(args.stage, args)
     else:
         # Run from specified stage to end
-        for stage in range(args.from_stage, 7):
+        start_idx = STAGE_ORDER.index(args.from_stage)
+        for stage in STAGE_ORDER[start_idx:]:
             run_stage(stage, args)
 
 

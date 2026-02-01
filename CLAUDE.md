@@ -11,23 +11,18 @@ Before doing any work on this project, read these files:
 
 ### Running Pipeline Stages
 
-Always use the main entry point:
+Always use the wrapper script (handles logging automatically):
 ```bash
-./run_pipeline.py --stage N        # Run single stage
-./run_pipeline.py --from-stage N   # Run from stage N to end
-./run_pipeline.py --status         # Show current status
+./run --stage N        # Run single stage
+./run --from-stage N   # Run from stage N to end
+./run --status         # Show current status
 ```
+
+The wrapper:
+- Sets PYTHONUNBUFFERED=1 so output isn't lost on crashes
+- Tees output to timestamped log files in output/logs/
 
 Never run stage modules directly (e.g., `python -m pipeline.stage2_individual`).
-
-### Logging
-
-All pipeline runs should log to both stdout AND a file for shared visibility:
-```bash
-./run_pipeline.py --stage 2 2>&1 | tee output/logs/stage2_$(date +%Y%m%d_%H%M%S).log
-```
-
-Create the logs directory if needed: `mkdir -p output/logs`
 
 ### Code Changes
 
