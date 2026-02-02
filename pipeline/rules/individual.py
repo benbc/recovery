@@ -196,25 +196,15 @@ def rule_flag_icon(photo: dict) -> Optional[tuple[str, str]]:
     return None
 
 
-def rule_system_cache(photo: dict) -> Optional[tuple[str, str]]:
+def rule_trashes(photo: dict) -> Optional[tuple[str, str]]:
     """
-    SYSTEM_CACHE: Reject files in system cache/temp directories.
+    TRASHES: Reject files in macOS external volume trash.
 
-    Condition: path contains cache/temp patterns
-    Rationale: Transient files, not permanent photos
+    Condition: path contains /.Trashes/
+    Rationale: Files in trash on external volumes - user deleted these
     """
-    cache_patterns = [
-        "/.cache/",
-        "/cache/",
-        "/.thumbnails/",
-        "/temp/",
-        "/.Trash/",
-        "/Trash/",
-        "/.Trashes/",  # macOS trash on external volumes
-    ]
-    for pattern in cache_patterns:
-        if _any_path_matches(photo, pattern):
-            return ("reject", "SYSTEM_CACHE")
+    if _any_path_matches(photo, "/.Trashes/"):
+        return ("reject", "TRASHES")
     return None
 
 
@@ -322,6 +312,7 @@ REJECTION_RULES: list[RuleFunc] = [
     rule_flip_video_thumb,
     rule_video_thumbnail,
     rule_app_resource,
+    rule_trashes,
     # Size-based rules (catch-all, should be last)
     rule_tiny_icon,
 ]

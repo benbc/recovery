@@ -22,13 +22,15 @@ These rules examine a single photo in isolation. Each rule can produce one of tw
 |-----------|-----------|-----------|
 | `TINY_ICON` | width × height < 5,000 pixels | Too small to be a real photo (icons, emoji, UI elements) |
 | `MINECRAFT_TEXTURE` | path contains "minecraft" | Game textures, not personal photos |
-| `ICHAT_ICON` | path contains chat app folders + small size | Chat app emoticons and icons |
+| `ICHAT_ICON` | path contains chat app folders + max dimension < 200px | Chat app emoticons and icons |
 | `WEB_ASSET` | in `*_files/` directory with companion .htm file | Browser-saved web page assets |
-| `FACE_CROP` | in `/modelresources/`, square, ≤500px | Photos.app face detection thumbnails |
-| `STOCK_GREETING` | 3-digit filename in `/Thumbnails/` path | Built-in greeting card templates |
+| `FACE_CROP` | in `/modelresources/`, square, ≤500px; or filename contains `_face` | Photos.app/iPhoto face detection thumbnails |
+| `STOCK_GREETING` | 3-digit filename in `20140223-155504/` folder | Built-in greeting card templates |
 | `FLAG_ICON` | in known flag icons folder (20121223-175144) | System icons imported into iPhoto |
-| `SYSTEM_CACHE` | path contains cache/temp patterns | Transient system files |
-| `FLIP_VIDEO_THUMB` | in `FlipShare Data/Previews/` | Auto-generated video thumbnails |
+| `FLIP_VIDEO_THUMB` | in `FlipShare Data/Previews/` or `My Flip Video Prefs/` | Auto-generated video thumbnails |
+| `VIDEO_THUMBNAIL` | filename starts with `MVI_` or ends with `.THM` | Video preview images from cameras/iPhoto |
+| `APP_RESOURCE` | path contains `.app/Contents/` | Application bundle resources, not personal photos |
+| `TRASHES` | path contains `/.Trashes/` | Files in macOS external volume trash |
 
 ### Separation Rules
 
@@ -71,7 +73,7 @@ Perceptual hash hamming distance is used in two ways:
 | Distance | Meaning | Use |
 |----------|---------|-----|
 | 0 | Identical content | - |
-| ≤2 | Definitely same photo (minor processing differences) | DERIVATIVE, GENERIC_NAME rules |
+| ≤2 | Definitely same photo (minor processing differences) | DERIVATIVE rule |
 | 4 | ~50% same photo, ~50% same scene different shot | Too risky for auto-decisions |
 | 6-8 | Mostly same scene, different shot | - |
 | ≤10 | Same scene or similar composition | Grouping threshold |
@@ -102,7 +104,7 @@ dHash can help in pHash borderline cases:
 
 | Criteria | Use |
 |----------|-----|
-| pHash ≤2 | DERIVATIVE, GENERIC_NAME rules |
+| pHash ≤2 | DERIVATIVE rule |
 | pHash ≤6 AND dHash=0 | Also same photo |
 
 ## Path Quality Scoring
@@ -156,16 +158,6 @@ All hash comparisons use the helper functions in `pipeline/utils/hashing.py`:
 | `is_same_scene()` | Grouping (Stage 4) | See combined thresholds above |
 
 These helpers ensure consistent threshold application throughout the codebase.
-
-## Rules Needing Verification/Tuning
-
-| Rule | Current Threshold | Notes |
-|------|------------------|-------|
-| `THUMBNAIL` | `is_same_photo()` | Now uses consistent "same photo" check |
-| `PREVIEW` | filename match only | May need `is_same_photo()` check |
-| `IPHOTO_COPY` | resolution match only | May need `is_same_photo()` check |
-| `DERIVATIVE` | `is_same_photo()` | Now uses consistent "same photo" check |
-| `GENERIC_NAME` | pHash = 0 | Strictest threshold for pixel-identical |
 
 ## Adding New Rules
 

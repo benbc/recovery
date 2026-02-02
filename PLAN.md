@@ -150,12 +150,15 @@ These classify photos based on properties alone, without knowing about duplicate
 |-----------|-----------|-----------|
 | `TINY_ICON` | width * height < 5000 | Too small to be a real photo |
 | `MINECRAFT_TEXTURE` | path contains minecraft patterns | Game assets |
-| `ICHAT_ICON` | path contains iChat/Messages icon folders | Chat app assets |
+| `ICHAT_ICON` | path contains iChat/Messages icon folders + small | Chat app assets |
 | `WEB_ASSET` | companion .htm file exists | Saved web page |
-| `FACE_CROP` | in modelresources/, square, <=500px | Photos.app face detection |
-| `STOCK_GREETING` | 3-digit filename in Thumbnails/ | Greeting card templates |
-| `FLAG_ICON` | in known flag icons folder | System icons (needs review) |
-| `SYSTEM_CACHE` | path contains cache/temp patterns | Transient files |
+| `FACE_CROP` | in modelresources/, square, <=500px; or `_face` in filename | Photos.app face detection |
+| `STOCK_GREETING` | 3-digit filename in specific folder | Greeting card templates |
+| `FLAG_ICON` | in known flag icons folder | System icons |
+| `FLIP_VIDEO_THUMB` | in FlipShare/Flip Video folders | Video thumbnails |
+| `VIDEO_THUMBNAIL` | filename starts with MVI_ or ends with .THM | Video preview images |
+| `APP_RESOURCE` | path contains .app/Contents/ | Application resources |
+| `TRASHES` | path contains /.Trashes/ | macOS external volume trash |
 
 #### Separation Rules (keep but handle separately)
 
@@ -176,7 +179,7 @@ Rules can use hamming distance as evidence (close = definitely same, threshold =
 | `PREVIEW` | in /Previews/ when larger version exists | Keep original |
 | `IPHOTO_COPY` | in .photolibrary when same in .photoslibrary | Prefer newer app |
 | `DERIVATIVE` | resized version of identical content | Keep largest |
-| `GENERIC_NAME` | IMG_xxx when human-named pixel-identical exists | Prefer named |
+| `SAME_RES_DUPLICATE` | same resolution and same photo; prefer non-library path | Deduplicate |
 
 ---
 
