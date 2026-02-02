@@ -8,7 +8,7 @@ Rules can use hamming distance between specific photos as evidence
 Rule categories:
 - THUMBNAIL: Reject smaller thumbnail when larger non-thumbnail exists
 - PREVIEW: Reject preview versions when larger original exists
-- IPHOTO_COPY: Prefer Photos.app over iPhoto when same resolution
+- IPHOTO_COPY: Prefer iPhoto over Photos.app (EXIF can get lost in migration)
 - DERIVATIVE: Reject resized versions (same content, smaller)
 - SAME_RES_DUPLICATE: Reject same-resolution duplicates (prefer non-library, then larger)
 
@@ -212,9 +212,11 @@ def rule_preview(group: list[dict]) -> list[tuple[str, str]]:
 
 def rule_iphoto_copy(group: list[dict]) -> list[tuple[str, str]]:
     """
-    IPHOTO_COPY: Reject iPhoto version when same photo exists in Photos.app library.
+    IPHOTO_COPY: Reject Photos.app version when same photo exists in iPhoto library.
 
-    Prefer the newer Photos.app version over older iPhoto version.
+    Prefer iPhoto over Photos.app because EXIF data can get lost during migration
+    from iPhoto to Photos.app. Photos in iPhoto library are typically byte-for-byte
+    identical to non-library originals (same hash), preserving EXIF.
     Uses is_same_photo hash check (allows slight resolution differences from
     library processing).
     """
@@ -233,26 +235,26 @@ def rule_iphoto_copy(group: list[dict]) -> list[tuple[str, str]]:
     if not iphoto_photos or not photos_photos:
         return []
 
-    # For each iPhoto photo, check if same photo exists in Photos
-    for iphoto in iphoto_photos:
-        iphoto_phash = iphoto.get("perceptual_hash")
-        iphoto_dhash = iphoto.get("dhash")
+    # For each Photos.app photo, check if same photo exists in iPhoto
+    for photos in photos_photos:
+        photos_phash = photos.get("perceptual_hash")
+        photos_dhash = photos.get("dhash")
 
-        if not iphoto_phash or not iphoto_dhash:
+        if not photos_phash or not photos_dhash:
             continue
 
-        for photos in photos_photos:
-            photos_phash = photos.get("perceptual_hash")
-            photos_dhash = photos.get("dhash")
+        for iphoto in iphoto_photos:
+            iphoto_phash = iphoto.get("perceptual_hash")
+            iphoto_dhash = iphoto.get("dhash")
 
-            if not photos_phash or not photos_dhash:
+            if not iphoto_phash or not iphoto_dhash:
                 continue
 
             # Same photo check (allows slight resolution differences)
             phash_dist = hamming_distance(iphoto_phash, photos_phash)
             dhash_dist = hamming_distance(iphoto_dhash, photos_dhash)
             if is_same_photo(phash_dist, dhash_dist):
-                rejections.append((iphoto["id"], "IPHOTO_COPY"))
+                rejections.append((photos["id"], "IPHOTO_COPY"))
                 break
 
     return rejections

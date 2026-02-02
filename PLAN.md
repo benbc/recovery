@@ -177,7 +177,7 @@ Rules can use hamming distance as evidence (close = definitely same, threshold =
 |-----------|-----------|-----------|
 | `THUMBNAIL` | smaller version when larger exists, close hamming distance | Keep original |
 | `PREVIEW` | in /Previews/ when larger version exists | Keep original |
-| `IPHOTO_COPY` | in .photolibrary when same in .photoslibrary | Prefer newer app |
+| `IPHOTO_COPY` | in .photoslibrary when same in .photolibrary | Prefer iPhoto (EXIF can get lost in migration to Photos.app) |
 | `DERIVATIVE` | resized version of identical content | Keep largest |
 | `SAME_RES_DUPLICATE` | same resolution and same photo; prefer non-library path | Deduplicate |
 

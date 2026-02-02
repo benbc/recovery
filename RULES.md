@@ -51,7 +51,7 @@ like resolution, file size, and hamming distance to determine which version to k
 |-----------|-----------|-----------|
 | `THUMBNAIL` | Smaller version when larger non-thumbnail exists AND low hamming distance to that specific master | Keep the original, discard thumbnail |
 | `PREVIEW` | In `/Previews/` when larger file with same filename exists | Keep the original, discard preview |
-| `IPHOTO_COPY` | In `.photolibrary` when same resolution exists in `.photoslibrary` | Prefer newer Photos.app over older iPhoto |
+| `IPHOTO_COPY` | In `.photoslibrary` when same photo exists in `.photolibrary` | Prefer iPhoto (EXIF can get lost in migration to Photos.app) |
 | `DERIVATIVE` | Smaller resolution with hamming distance ≤2 to larger version | Keep the highest resolution version |
 | `SAME_RES_DUPLICATE` | Same resolution and is_same_photo; one in library-generated path or smaller file size | Prefer non-library path, then larger file |
 
