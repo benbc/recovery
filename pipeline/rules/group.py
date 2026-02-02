@@ -10,6 +10,7 @@ Rule categories:
 - PREVIEW: Reject preview versions when larger original exists
 - IPHOTO_COPY: Prefer Photos.app over iPhoto when same resolution
 - DERIVATIVE: Reject resized versions (same content, smaller)
+- SAME_RES_DUPLICATE: Reject same-resolution duplicates (prefer non-library, then larger)
 
 Each rule returns a list of (rejected_photo_id, rule_name) tuples.
 """
@@ -76,6 +77,16 @@ def _is_thumbnail(photo: dict) -> bool:
 def _is_previews_path(path: str) -> bool:
     """Check if path is in a Previews folder."""
     return "/previews/" in path.lower()
+
+
+def _is_library_generated_path(path: str) -> bool:
+    """Check if path is in a library-generated folder (not user-organized)."""
+    path_lower = path.lower()
+    return (
+        "/previews/" in path_lower
+        or "/thumbnails/" in path_lower
+        or "/modelresources/" in path_lower
+    )
 
 
 def _is_iphoto_library(path: str) -> bool:
@@ -204,7 +215,8 @@ def rule_iphoto_copy(group: list[dict]) -> list[tuple[str, str]]:
     IPHOTO_COPY: Reject iPhoto version when same photo exists in Photos.app library.
 
     Prefer the newer Photos.app version over older iPhoto version.
-    Must be same resolution AND same photo (verified via hash).
+    Uses is_same_photo hash check (allows slight resolution differences from
+    library processing).
     """
     rejections = []
 
@@ -223,7 +235,6 @@ def rule_iphoto_copy(group: list[dict]) -> list[tuple[str, str]]:
 
     # For each iPhoto photo, check if same photo exists in Photos
     for iphoto in iphoto_photos:
-        iphoto_res = _resolution(iphoto)
         iphoto_phash = iphoto.get("perceptual_hash")
         iphoto_dhash = iphoto.get("dhash")
 
@@ -231,20 +242,18 @@ def rule_iphoto_copy(group: list[dict]) -> list[tuple[str, str]]:
             continue
 
         for photos in photos_photos:
-            photos_res = _resolution(photos)
             photos_phash = photos.get("perceptual_hash")
             photos_dhash = photos.get("dhash")
 
             if not photos_phash or not photos_dhash:
                 continue
 
-            # Must be same resolution AND same photo
-            if iphoto_res == photos_res:
-                phash_dist = hamming_distance(iphoto_phash, photos_phash)
-                dhash_dist = hamming_distance(iphoto_dhash, photos_dhash)
-                if is_same_photo(phash_dist, dhash_dist):
-                    rejections.append((iphoto["id"], "IPHOTO_COPY"))
-                    break
+            # Same photo check (allows slight resolution differences)
+            phash_dist = hamming_distance(iphoto_phash, photos_phash)
+            dhash_dist = hamming_distance(iphoto_dhash, photos_dhash)
+            if is_same_photo(phash_dist, dhash_dist):
+                rejections.append((iphoto["id"], "IPHOTO_COPY"))
+                break
 
     return rejections
 
@@ -298,18 +307,119 @@ def rule_derivative(group: list[dict]) -> list[tuple[str, str]]:
     return rejections
 
 
+def _has_library_generated_path(photo: dict) -> bool:
+    """Check if photo has any library-generated path."""
+    return any(_is_library_generated_path(p) for p in _get_paths(photo))
+
+
+def _pick_dominated_same_res(p1: dict, p2: dict) -> str:
+    """
+    Pick which photo to reject when both are same resolution and same photo.
+
+    Returns photo_id to reject.
+
+    Priority:
+    1. Prefer non-library path over library-generated path
+    2. If both library or both non-library: prefer larger file size
+    3. Arbitrary tiebreaker: keep first by id
+    """
+    lib1 = _has_library_generated_path(p1)
+    lib2 = _has_library_generated_path(p2)
+
+    # Rule 1: Prefer non-library over library
+    if lib1 and not lib2:
+        return p1["id"]
+    if lib2 and not lib1:
+        return p2["id"]
+
+    # Rule 2: Both library or both non-library - prefer larger file
+    size1 = p1.get("file_size") or 0
+    size2 = p2.get("file_size") or 0
+
+    if size1 > size2:
+        return p2["id"]
+    elif size2 > size1:
+        return p1["id"]
+
+    # Rule 3: Arbitrary - keep first by id (deterministic)
+    if p1["id"] < p2["id"]:
+        return p2["id"]
+    else:
+        return p1["id"]
+
+
+def rule_same_res_duplicate(group: list[dict]) -> list[tuple[str, str]]:
+    """
+    SAME_RES_DUPLICATE: Reject duplicate when same photo exists at same resolution.
+
+    For pairs that:
+    - Pass is_same_photo threshold (pHash ≤ 2, or pHash ≤ 6 with dHash = 0)
+    - Have same resolution (width * height), including rotated pairs
+
+    Decision priority:
+    1. Prefer non-library path over library-generated path
+       (/Previews/, /Thumbnails/, /modelresources/)
+    2. If both library or both non-library: prefer larger file size
+    """
+    rejections = []
+    dominated = set()
+
+    for i, photo in enumerate(group):
+        if photo["id"] in dominated:
+            continue
+
+        photo_res = _resolution(photo)
+        photo_phash = photo.get("perceptual_hash")
+        photo_dhash = photo.get("dhash")
+
+        if not photo_phash or not photo_dhash:
+            continue
+
+        for other in group[i + 1 :]:
+            if other["id"] in dominated:
+                continue
+
+            other_res = _resolution(other)
+            other_phash = other.get("perceptual_hash")
+            other_dhash = other.get("dhash")
+
+            if not other_phash or not other_dhash:
+                continue
+
+            # Must be same resolution (pixel count)
+            if photo_res != other_res:
+                continue
+
+            # Must be same photo (strict threshold)
+            phash_dist = hamming_distance(photo_phash, other_phash)
+            dhash_dist = hamming_distance(photo_dhash, other_dhash)
+            if not is_same_photo(phash_dist, dhash_dist):
+                continue
+
+            # Pick which one to reject
+            dominated_id = _pick_dominated_same_res(photo, other)
+            if dominated_id:
+                dominated.add(dominated_id)
+
+    for photo_id in dominated:
+        rejections.append((photo_id, "SAME_RES_DUPLICATE"))
+
+    return rejections
+
+
 # =============================================================================
 # RULE REGISTRY
 # =============================================================================
 
 # Rules in order of application.
 # Each rule only sees photos not yet rejected by earlier rules.
-# Order: THUMBNAIL -> PREVIEW -> IPHOTO_COPY -> DERIVATIVE
+# Order: THUMBNAIL -> PREVIEW -> IPHOTO_COPY -> DERIVATIVE -> SAME_RES_DUPLICATE
 GROUP_RULES: list[GroupRuleFunc] = [
-    rule_thumbnail,      # Reject thumbnails when larger exists
-    rule_preview,        # Reject preview versions when larger exists
-    rule_iphoto_copy,    # Prefer Photos.app over iPhoto
-    rule_derivative,     # Reject resized versions (same content, smaller)
+    rule_thumbnail,          # Reject thumbnails when larger exists
+    rule_preview,            # Reject preview versions when larger exists
+    rule_iphoto_copy,        # Prefer Photos.app over iPhoto
+    rule_derivative,         # Reject resized versions (same content, smaller)
+    rule_same_res_duplicate, # Reject same-res duplicates (prefer non-library, then larger)
 ]
 
 

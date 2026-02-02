@@ -371,7 +371,7 @@ def get_total_groups(conn, rule_name=None):
 
 
 # Rule order - must match pipeline/rules/group.py
-RULE_ORDER = ["THUMBNAIL", "PREVIEW", "IPHOTO_COPY", "DERIVATIVE"]
+RULE_ORDER = ["THUMBNAIL", "PREVIEW", "IPHOTO_COPY", "DERIVATIVE", "SAME_RES_DUPLICATE"]
 
 
 def get_earlier_rules(rule_name: str) -> list[str]:

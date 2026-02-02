@@ -51,8 +51,9 @@ like resolution, file size, and hamming distance to determine which version to k
 | `PREVIEW` | In `/Previews/` when larger file with same filename exists | Keep the original, discard preview |
 | `IPHOTO_COPY` | In `.photolibrary` when same resolution exists in `.photoslibrary` | Prefer newer Photos.app over older iPhoto |
 | `DERIVATIVE` | Smaller resolution with hamming distance ≤2 to larger version | Keep the highest resolution version |
+| `SAME_RES_DUPLICATE` | Same resolution and is_same_photo; one in library-generated path or smaller file size | Prefer non-library path, then larger file |
 
-**Rule order**: THUMBNAIL → PREVIEW → IPHOTO_COPY → DERIVATIVE
+**Rule order**: THUMBNAIL → PREVIEW → IPHOTO_COPY → DERIVATIVE → SAME_RES_DUPLICATE
 
 Each rule only sees photos not yet rejected by earlier rules, so it's never possible to reject all photos in a group.
 
