@@ -2,21 +2,28 @@
 
 ## Current State
 
-Completed:
-- [x] Stage 1: Scan & Extract (85,710 photos, 106,246 paths)
-- [x] Stage 1b: Create hardlinks for safety/serving
-- [x] Stage 2: Individual Classification (26,580 rejected, 18,710 separated)
-- [x] Stage 3: Perceptual Hash (pHash + dHash with EXIF rotation normalization)
-- [x] Stage 4: Group Duplicates (9,353 groups, 37,282 photos)
-- [x] Stage 4b: Merge Bridge-Connected Groups (31 merges)
-- [x] Stage 5: Group Rejection (26,571 rejections)
+**About to rerun full pipeline** with enriched date extraction schema.
+
+Changes made:
+- [x] Enriched EXIF extraction (make, model, software, all date fields)
+- [x] Multiple date sources per photo (photo_date_sources table)
+- [x] Path-based date parsing (semantic patterns like "Xmas 2004", "April 2010")
+- [x] Filename-based date parsing (enhanced patterns)
+- [x] Confidence levels for dates (high/medium/low/suspect/unusable)
+- [x] IPHOTO_COPY rule flipped to prefer iPhoto (EXIF preserved better)
+- [x] Stage 6 removed (needs date assignment logic first)
 
 Next:
-- [ ] Stage 6: Export
+- [ ] Rerun pipeline from Stage 1
+- [ ] Implement dynamic date selection function (for groups)
+- [ ] Design export with date-based organization
+- [ ] Implement Stage 6: Export
 
 ## Remaining Decisions
 
-- [ ] Decide export directory structure (by date? flat? hybrid?)
+- [ ] Export directory structure (by date? flat? hybrid?)
+- [ ] How to handle groups with conflicting dates
+- [ ] Manual review of ~90 conflict groups for patterns
 
 ## Potential Future Work
 

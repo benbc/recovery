@@ -17,9 +17,14 @@ CREATE TABLE IF NOT EXISTS photos (
     file_size INTEGER NOT NULL,
     width INTEGER,
     height INTEGER,
-    date_taken DATETIME,
-    date_source TEXT,              -- 'exif', 'filename', 'mtime'
-    has_exif BOOLEAN DEFAULT 0,    -- Has any EXIF data
+    -- EXIF provenance fields
+    exif_make TEXT,                -- Camera manufacturer
+    exif_model TEXT,               -- Camera model
+    exif_software TEXT,            -- Software that processed the image
+    exif_datetime TEXT,            -- 0th IFD DateTime (modification date)
+    exif_datetime_original TEXT,   -- Exif IFD DateTimeOriginal (when taken)
+    exif_datetime_digitized TEXT,  -- Exif IFD DateTimeDigitized
+    -- Computed later
     perceptual_hash TEXT,          -- pHash, computed in Stage 3
     dhash TEXT,                    -- dHash, computed in Stage 3
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -31,7 +36,21 @@ CREATE TABLE IF NOT EXISTS photo_paths (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     photo_id TEXT NOT NULL REFERENCES photos(id),
     source_path TEXT NOT NULL,
-    filename TEXT NOT NULL
+    filename TEXT NOT NULL,
+    mtime TEXT                     -- File modification time (ISO format)
+);
+
+-- Date sources extracted from various places (Stage 1)
+-- Multiple rows per photo possible (different paths may have different dates)
+CREATE TABLE IF NOT EXISTS photo_date_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    photo_id TEXT NOT NULL REFERENCES photos(id),
+    source_type TEXT NOT NULL,     -- 'exif_original', 'exif_digitized', 'exif_datetime',
+                                   -- 'filename', 'path_semantic', 'mtime'
+    date_value TEXT,               -- ISO format date/datetime, or partial like '2004-12'
+    confidence TEXT NOT NULL,      -- 'high', 'medium', 'low', 'suspect', 'unusable'
+    raw_value TEXT,                -- Original string for debugging (e.g., 'Xmas 2004')
+    path_id INTEGER REFERENCES photo_paths(id)  -- Which path this came from (for path-based dates)
 );
 
 -- Individual decisions (Stage 2)
@@ -67,6 +86,7 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_photos_perceptual_hash ON photos(perceptual_hash);
 CREATE INDEX IF NOT EXISTS idx_photo_paths_photo_id ON photo_paths(photo_id);
+CREATE INDEX IF NOT EXISTS idx_photo_date_sources_photo_id ON photo_date_sources(photo_id);
 CREATE INDEX IF NOT EXISTS idx_individual_decisions_decision ON individual_decisions(decision);
 CREATE INDEX IF NOT EXISTS idx_duplicate_groups_group_id ON duplicate_groups(group_id);
 CREATE INDEX IF NOT EXISTS idx_group_rejections_group_id ON group_rejections(group_id);
@@ -78,13 +98,6 @@ def init_db(db_path: Path = DB_PATH) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
-
-    # Migration: add dhash column if missing
-    try:
-        conn.execute("ALTER TABLE photos ADD COLUMN dhash TEXT")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-
     conn.commit()
     conn.close()
 
@@ -127,6 +140,7 @@ def get_stage_status(conn: sqlite3.Connection, stage: str) -> dict | None:
 def clear_stage_data(conn: sqlite3.Connection, stage: str) -> None:
     """Clear data from a specific stage for re-running."""
     if stage == "1":
+        conn.execute("DELETE FROM photo_date_sources")
         conn.execute("DELETE FROM photo_paths")
         conn.execute("DELETE FROM photos")
     elif stage == "2":
@@ -178,7 +192,7 @@ def get_photos_for_phash(conn: sqlite3.Connection) -> list[dict]:
 def get_photos_for_grouping(conn: sqlite3.Connection) -> list[dict]:
     """Get photos with perceptual hashes for duplicate grouping."""
     cursor = conn.execute("""
-        SELECT p.id, p.perceptual_hash, p.dhash, p.width, p.height, p.file_size, p.has_exif
+        SELECT p.id, p.perceptual_hash, p.dhash, p.width, p.height, p.file_size
         FROM photos p
         LEFT JOIN individual_decisions d ON p.id = d.photo_id
         WHERE p.perceptual_hash IS NOT NULL

@@ -96,7 +96,7 @@ def get_group_photos(group_id: int):
     cursor = conn.execute("""
         SELECT
             p.id, p.mime_type, p.width, p.height, p.file_size,
-            p.perceptual_hash, p.dhash, p.has_exif,
+            p.perceptual_hash, p.dhash, p.exif_make, p.exif_model,
             GROUP_CONCAT(pp.source_path, '|') as all_paths
         FROM duplicate_groups dg
         JOIN photos p ON dg.photo_id = p.id
@@ -112,6 +112,7 @@ def get_group_photos(group_id: int):
         photo['paths'] = photo['all_paths'].split('|') if photo['all_paths'] else []
         photo['resolution'] = f"{photo['width']}x{photo['height']}"
         photo['megapixels'] = round((photo['width'] or 0) * (photo['height'] or 0) / 1_000_000, 1)
+        photo['has_exif'] = bool(photo.get('exif_make') or photo.get('exif_model'))
         photos.append(photo)
 
     conn.close()

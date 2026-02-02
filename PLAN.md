@@ -293,6 +293,61 @@ Tools to create as needs arise during rule development:
 
 ---
 
+## Date Assignment Plan
+
+Date assignment is needed for organizing exported photos by date. The algorithm computes dates dynamically (not stored) because groups may be manually adjusted.
+
+### Date Sources (per photo path)
+
+Each photo can have multiple source paths, and each path can provide multiple date signals:
+
+| Source Type | Example | Confidence |
+|-------------|---------|------------|
+| `exif_original` | DateTimeOriginal with camera make/model | high |
+| `exif_original` | DateTimeOriginal without make/model (software-added) | low |
+| `exif_digitized` | DateTimeDigitized (if different from original) | medium |
+| `exif_datetime` | DateTime only (modification date) | medium |
+| `filename` | `20131006_124455_resized.jpg` | medium |
+| `path_semantic` | "Xmas 2004/", "April 2010", YYMMDD folders | medium |
+| `mtime` | File modification time | low |
+
+### Confidence Levels
+
+- **high**: Camera-originated EXIF (has make/model)
+- **medium**: Software-preserved EXIF, filename dates, semantic paths
+- **low**: Software-added EXIF (no make/model), mtime
+- **suspect**: Dates outside 1990-2030 range
+- **unusable**: Known camera defaults (e.g., 2012-12-31T23:00:00 on Nikon COOLPIX)
+
+### Date Selection Algorithm (Dynamic)
+
+For each photo/group, compute the best date at query time:
+
+1. **Gather all date sources** from all group members (including rejected ones)
+   - Rejected members may have EXIF that accepted members lost
+
+2. **Filter out unusable dates**
+   - Known camera defaults
+   - Dates outside valid range
+
+3. **Select by confidence tier**
+   - If any high-confidence dates exist, use the earliest one
+   - Else if medium-confidence dates exist, use the earliest
+   - Else use the earliest low-confidence date
+
+4. **Handle conflicts**
+   - If multiple high-confidence dates disagree by >1 year, flag for review
+   - Groups with ~90 such conflicts will be manually reviewed for patterns
+
+### Key Design Decisions
+
+- **Library import dates are excluded**: Paths in `.photolibrary`/`.photoslibrary` have dates like `2012/01/29/` which are import dates, not photo dates
+- **Use rejected group members**: A photo rejected by IPHOTO_COPY may have the only EXIF date in the group
+- **Compute dynamically**: Don't store consensus dates because groups will be manually adjusted
+- **Partial dates are valid**: "2004-12" (from "Xmas 2004") or "2010" (from path) are acceptable when no full date exists
+
+---
+
 ## Open Questions
 
 1. Directory structure for exported photos - by date? flat? (decide later)
