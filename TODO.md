@@ -24,6 +24,11 @@ Next:
 - [ ] Export directory structure (by date? flat? hybrid?)
 - [ ] How to handle groups with conflicting dates
 - [ ] Manual review of ~90 conflict groups for patterns
+- [ ] **Post-split date inheritance**: When a group is manually split, auto-rejected photos
+      stay with their original group. Their date metadata may be used for date assignment,
+      but they might conceptually belong to the split-off group. Consider whether to:
+      (a) move auto-rejected photos during splits, (b) exclude auto-rejected photos from
+      date calculation, or (c) handle this in manual review
 
 ## Potential Future Work
 

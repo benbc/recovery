@@ -247,11 +247,11 @@ def run_stage4(clear_existing: bool = False) -> None:
     print()
 
     with get_connection() as conn:
-        if clear_existing:
-            print("Clearing existing Stage 4 data...")
-            conn.execute("DELETE FROM duplicate_groups")
-            conn.execute("DROP TABLE IF EXISTS unlinked_pairs")
-            conn.commit()
+        # Always clear output tables - this stage fully regenerates its output
+        print("Clearing existing Stage 4 data...")
+        conn.execute("DELETE FROM duplicate_groups")
+        conn.execute("DROP TABLE IF EXISTS unlinked_pairs")
+        conn.commit()
 
         # Create unlinked_pairs table
         conn.execute("""
