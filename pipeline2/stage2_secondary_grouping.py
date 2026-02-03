@@ -31,23 +31,12 @@ from pipeline.utils.hashing import hamming_distance
 def get_kept_photos_with_hashes(conn) -> list[dict]:
     """
     Get photos that are kept (not deleted/rejected) and have hashes.
-
-    Excludes:
-    - junk_deletions
-    - group_rejections
-    - individual_decisions (both reject and separate)
     """
     cursor = conn.execute("""
-        SELECT p.id, p.perceptual_hash, p.dhash
-        FROM photos p
-        LEFT JOIN junk_deletions jd ON p.id = jd.photo_id
-        LEFT JOIN group_rejections gr ON p.id = gr.photo_id
-        LEFT JOIN individual_decisions id ON p.id = id.photo_id
-        WHERE jd.photo_id IS NULL
-        AND gr.photo_id IS NULL
-        AND id.photo_id IS NULL
-        AND p.perceptual_hash IS NOT NULL
-        AND p.dhash IS NOT NULL
+        SELECT id, perceptual_hash, dhash
+        FROM kept_photos
+        WHERE perceptual_hash IS NOT NULL
+        AND dhash IS NOT NULL
     """)
     return [dict(row) for row in cursor.fetchall()]
 

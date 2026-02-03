@@ -112,18 +112,11 @@ def sample_pairs_dynamically(sample_size: int = 3000):
     conn = get_connection()
     cursor = conn.execute("""
         SELECT
-            p.id, p.perceptual_hash as phash, p.dhash,
-            eh.phash_16, eh.colorhash,
-            dg.group_id as primary_group, p.mime_type
-        FROM photos p
-        JOIN extended_hashes eh ON p.id = eh.photo_id
-        LEFT JOIN junk_deletions jd ON p.id = jd.photo_id
-        LEFT JOIN group_rejections gr ON p.id = gr.photo_id
-        LEFT JOIN individual_decisions id ON p.id = id.photo_id
-        LEFT JOIN duplicate_groups dg ON p.id = dg.photo_id
-        WHERE jd.photo_id IS NULL
-        AND gr.photo_id IS NULL
-        AND id.photo_id IS NULL
+            kp.id, kp.perceptual_hash as phash, kp.dhash,
+            kp.phash_16, kp.colorhash,
+            dg.group_id as primary_group, kp.mime_type
+        FROM kept_photos_with_hashes kp
+        LEFT JOIN duplicate_groups dg ON kp.id = dg.photo_id
         ORDER BY RANDOM()
         LIMIT ?
     """, (sample_size,))

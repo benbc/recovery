@@ -4,11 +4,12 @@ Pipeline2 Stage 1b: Compute All Pairwise Distances
 Computes distances between all pairs of kept photos and caches them.
 This enables instant threshold exploration without sampling.
 
-With 12,836 photos = 82M pairs. At ~1M pairs/sec, takes ~80 seconds.
+With 12,836 photos = 82M pairs. Uses multiprocessing for speed.
 Storage: ~1-2 GB depending on schema.
 """
 
-from collections import defaultdict
+import multiprocessing as mp
+import os
 
 from tqdm import tqdm
 
@@ -22,27 +23,82 @@ def get_kept_photos_with_all_hashes(conn) -> list[dict]:
     """
     cursor = conn.execute("""
         SELECT
-            p.id,
-            p.perceptual_hash as phash,
-            p.dhash,
-            eh.phash_16,
-            eh.colorhash,
+            kp.id,
+            kp.perceptual_hash as phash,
+            kp.dhash,
+            kp.phash_16,
+            kp.colorhash,
             dg.group_id as primary_group
-        FROM photos p
-        JOIN extended_hashes eh ON p.id = eh.photo_id
-        LEFT JOIN junk_deletions jd ON p.id = jd.photo_id
-        LEFT JOIN group_rejections gr ON p.id = gr.photo_id
-        LEFT JOIN individual_decisions id ON p.id = id.photo_id
-        LEFT JOIN duplicate_groups dg ON p.id = dg.photo_id
-        WHERE jd.photo_id IS NULL
-        AND gr.photo_id IS NULL
-        AND id.photo_id IS NULL
-        AND p.perceptual_hash IS NOT NULL
-        AND p.dhash IS NOT NULL
-        AND eh.phash_16 IS NOT NULL
-        AND eh.colorhash IS NOT NULL
+        FROM kept_photos_with_hashes kp
+        LEFT JOIN duplicate_groups dg ON kp.id = dg.photo_id
     """)
     return [dict(row) for row in cursor.fetchall()]
+
+
+# Global for worker processes (set via initializer)
+_photos = None
+_n = None
+
+
+def _init_worker(photos):
+    """Initialize worker process with shared photo data."""
+    global _photos, _n
+    _photos = photos
+    _n = len(photos)
+
+
+def _pair_index_to_ij(k: int, n: int) -> tuple[int, int]:
+    """
+    Convert linear pair index k to (i, j) where i < j.
+
+    For n items, pairs are ordered as:
+    k=0: (0,1), k=1: (0,2), ..., k=n-2: (0,n-1),
+    k=n-1: (1,2), k=n: (1,3), ...
+    """
+    # i is the largest value such that i*(2n-i-1)/2 <= k
+    # Using quadratic formula
+    i = int((2 * n - 1 - ((2 * n - 1) ** 2 - 8 * k) ** 0.5) / 2)
+    # j is the remainder
+    j = k - i * (2 * n - i - 1) // 2 + i + 1
+    return i, j
+
+
+def _compute_pairs_chunk(args: tuple) -> list[tuple]:
+    """
+    Compute pairs for a chunk of the linear pair index space.
+
+    args: (start_k, end_k) - range of linear indices to compute
+
+    Returns list of tuples:
+        (id1, id2, same_group, phash_dist, dhash_dist, phash16_dist, colorhash_dist)
+    """
+    start_k, end_k = args
+    results = []
+    n = _n
+
+    for k in range(start_k, end_k):
+        i, j = _pair_index_to_ij(k, n)
+        p1 = _photos[i]
+        p2 = _photos[j]
+
+        # Ensure consistent ordering (smaller id first)
+        id1, id2 = (p1[0], p2[0]) if p1[0] < p2[0] else (p2[0], p1[0])
+
+        # Check if same primary group (index 5 is primary_group)
+        same_group = 1 if (p1[5] is not None and p1[5] == p2[5]) else 0
+
+        # Compute distances (indices: 1=phash, 2=dhash, 3=phash_16, 4=colorhash)
+        results.append((
+            id1,
+            id2,
+            same_group,
+            hamming_distance(p1[1], p2[1]),  # phash
+            hamming_distance(p1[2], p2[2]),  # dhash
+            hamming_distance(p1[3], p2[3]),  # phash_16
+            hamming_distance(p1[4], p2[4]),  # colorhash
+        ))
+
+    return results
 
 
 def run_stage1b(clear_existing: bool = False) -> None:
@@ -71,13 +127,6 @@ def run_stage1b(clear_existing: bool = False) -> None:
                 PRIMARY KEY (photo_id_1, photo_id_2)
             )
         """)
-
-        # Create indexes for fast threshold queries
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_phash ON photo_pairs(phash_dist)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_dhash ON photo_pairs(dhash_dist)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_phash16 ON photo_pairs(phash16_dist)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_colorhash ON photo_pairs(colorhash_dist)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_same_group ON photo_pairs(same_primary_group)")
         conn.commit()
 
         # Check existing count
@@ -88,59 +137,65 @@ def run_stage1b(clear_existing: bool = False) -> None:
 
         # Get photos
         print("Loading kept photos with all hashes...")
-        photos = get_kept_photos_with_all_hashes(conn)
-        print(f"Found {len(photos):,} photos")
+        photos_dicts = get_kept_photos_with_all_hashes(conn)
+        print(f"Found {len(photos_dicts):,} photos")
 
-        total_pairs = len(photos) * (len(photos) - 1) // 2
+        # Convert to tuples for efficient multiprocessing
+        # (id, phash, dhash, phash_16, colorhash, primary_group)
+        photos = [
+            (p["id"], p["phash"], p["dhash"], p["phash_16"], p["colorhash"], p["primary_group"])
+            for p in photos_dicts
+        ]
+        del photos_dicts
+
+        n = len(photos)
+        total_pairs = n * (n - 1) // 2
         print(f"Computing {total_pairs:,} pairs...")
+
+        num_workers = max(1, os.cpu_count() - 2)
+        print(f"Using {num_workers} workers")
+
+        # Create chunks of roughly equal size
+        # Each chunk is 10k pairs - small enough for good load balancing,
+        # large enough to amortize overhead
+        chunk_size = 10000
+        num_chunks = (total_pairs + chunk_size - 1) // chunk_size
+        chunks = []
+        for i in range(num_chunks):
+            start_k = i * chunk_size
+            end_k = min((i + 1) * chunk_size, total_pairs)
+            chunks.append((start_k, end_k))
+
+        print(f"Split into {num_chunks:,} chunks of ~{chunk_size:,} pairs each")
         print()
 
-        # Compute all pairs
-        batch = []
-        batch_size = 10000
+        # Compute pairs in parallel
         pair_count = 0
         same_group_count = 0
+        batch = []
+        batch_size = 50000
 
-        for i in tqdm(range(len(photos)), desc="Computing pairs"):
-            for j in range(i + 1, len(photos)):
-                p1 = photos[i]
-                p2 = photos[j]
+        with mp.Pool(num_workers, initializer=_init_worker, initargs=(photos,)) as pool:
+            for results in tqdm(
+                pool.imap_unordered(_compute_pairs_chunk, chunks),
+                total=num_chunks,
+                desc="Computing pairs"
+            ):
+                for row in results:
+                    batch.append(row)
+                    pair_count += 1
+                    if row[2]:  # same_group flag
+                        same_group_count += 1
 
-                # Ensure consistent ordering (smaller id first)
-                if p1["id"] > p2["id"]:
-                    p1, p2 = p2, p1
-
-                # Check if same primary group
-                same_group = (
-                    p1["primary_group"] is not None
-                    and p1["primary_group"] == p2["primary_group"]
-                )
-                if same_group:
-                    same_group_count += 1
-
-                # Compute all distances
-                batch.append({
-                    "photo_id_1": p1["id"],
-                    "photo_id_2": p2["id"],
-                    "same_primary_group": 1 if same_group else 0,
-                    "phash_dist": hamming_distance(p1["phash"], p2["phash"]),
-                    "dhash_dist": hamming_distance(p1["dhash"], p2["dhash"]),
-                    "phash16_dist": hamming_distance(p1["phash_16"], p2["phash_16"]),
-                    "colorhash_dist": hamming_distance(p1["colorhash"], p2["colorhash"]),
-                })
-                pair_count += 1
-
-                # Insert in batches
-                if len(batch) >= batch_size:
-                    conn.executemany("""
-                        INSERT OR REPLACE INTO photo_pairs
-                        (photo_id_1, photo_id_2, same_primary_group,
-                         phash_dist, dhash_dist, phash16_dist, colorhash_dist)
-                        VALUES (:photo_id_1, :photo_id_2, :same_primary_group,
-                                :phash_dist, :dhash_dist, :phash16_dist, :colorhash_dist)
-                    """, batch)
-                    conn.commit()
-                    batch = []
+                    if len(batch) >= batch_size:
+                        conn.executemany("""
+                            INSERT OR REPLACE INTO photo_pairs
+                            (photo_id_1, photo_id_2, same_primary_group,
+                             phash_dist, dhash_dist, phash16_dist, colorhash_dist)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, batch)
+                        conn.commit()
+                        batch = []
 
         # Insert remaining
         if batch:
@@ -148,10 +203,16 @@ def run_stage1b(clear_existing: bool = False) -> None:
                 INSERT OR REPLACE INTO photo_pairs
                 (photo_id_1, photo_id_2, same_primary_group,
                  phash_dist, dhash_dist, phash16_dist, colorhash_dist)
-                VALUES (:photo_id_1, :photo_id_2, :same_primary_group,
-                        :phash_dist, :dhash_dist, :phash16_dist, :colorhash_dist)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, batch)
             conn.commit()
+
+        # Create indexes after bulk insert (faster)
+        print("\nCreating indexes...")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_phash16 ON photo_pairs(phash16_dist)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_colorhash ON photo_pairs(colorhash_dist)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_same_group ON photo_pairs(same_primary_group)")
+        conn.commit()
 
         # Record completion
         record_stage_completion(

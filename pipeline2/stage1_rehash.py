@@ -40,20 +40,13 @@ def get_kept_photos_needing_hashes(conn) -> list[dict]:
     """
     Get kept photos that need extended hashes computed.
 
-    Returns photos not in junk_deletions, group_rejections, or individual_decisions,
-    that don't yet have extended hashes.
+    Returns kept photos that don't yet have extended hashes.
     """
     cursor = conn.execute("""
-        SELECT p.id, p.mime_type
-        FROM photos p
-        LEFT JOIN junk_deletions jd ON p.id = jd.photo_id
-        LEFT JOIN group_rejections gr ON p.id = gr.photo_id
-        LEFT JOIN individual_decisions id ON p.id = id.photo_id
-        LEFT JOIN extended_hashes eh ON p.id = eh.photo_id
-        WHERE jd.photo_id IS NULL
-        AND gr.photo_id IS NULL
-        AND id.photo_id IS NULL
-        AND p.perceptual_hash IS NOT NULL
+        SELECT kp.id, kp.mime_type
+        FROM kept_photos kp
+        LEFT JOIN extended_hashes eh ON kp.id = eh.photo_id
+        WHERE kp.perceptual_hash IS NOT NULL
         AND eh.photo_id IS NULL
     """)
     return [dict(row) for row in cursor.fetchall()]
