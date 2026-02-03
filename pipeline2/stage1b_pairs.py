@@ -81,7 +81,7 @@ def _compute_pairs_chunk(args: tuple) -> list[tuple]:
         p1 = _photos[i]
         p2 = _photos[j]
 
-        # Ensure consistent ordering (smaller id first)
+        # Ensure consistent ordering (lexicographically smaller id first)
         id1, id2 = (p1[0], p2[0]) if p1[0] < p2[0] else (p2[0], p1[0])
 
         # Check if same primary group (index 5 is primary_group)
@@ -209,6 +209,8 @@ def run_stage1b(clear_existing: bool = False) -> None:
 
         # Create indexes after bulk insert (faster)
         print("\nCreating indexes...")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_phash ON photo_pairs(phash_dist)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_dhash ON photo_pairs(dhash_dist)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_phash16 ON photo_pairs(phash16_dist)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_colorhash ON photo_pairs(colorhash_dist)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_same_group ON photo_pairs(same_primary_group)")
