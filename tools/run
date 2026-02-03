@@ -1,10 +1,12 @@
 #!/bin/bash
 # Run a tool with auto-restart on code changes (via Flask debug mode)
-# Output is visible for debugging
+# Output is visible and logged to output/logs/tools/
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+LOG_DIR="$PROJECT_DIR/output/logs/tools"
 
 if [ -z "$1" ]; then
     echo "Usage: tools/run <tool_name>"
@@ -24,8 +26,16 @@ if [ ! -f "$TOOL_PATH" ]; then
     exit 1
 fi
 
+# Create log directory
+mkdir -p "$LOG_DIR"
+
+# Generate log filename with timestamp
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+LOG_FILE="$LOG_DIR/${TOOL}_${TIMESTAMP}.log"
+
 echo "Starting $TOOL..."
 echo "Output will appear below. Flask debug mode will auto-restart on code changes."
+echo "Log file: $LOG_FILE"
 echo "---"
 export PYTHONUNBUFFERED=1
-exec uv run --script "$TOOL_PATH"
+uv run --script "$TOOL_PATH" 2>&1 | tee "$LOG_FILE"

@@ -23,6 +23,7 @@ from flask import Flask, render_template_string, send_file, request
 DB_PATH = Path(__file__).parent.parent / "output" / "photos.db"
 FILES_DIR = Path(__file__).parent.parent / "output" / "files"
 RATINGS_FILE = Path(__file__).parent.parent / "output" / "threshold_ratings.json"
+THRESHOLDS_FILE = Path(__file__).parent.parent / "output" / "threshold_boundaries.json"
 
 app = Flask(__name__)
 
@@ -33,6 +34,20 @@ def load_ratings() -> dict:
         with open(RATINGS_FILE) as f:
             return json.load(f)
     return {}
+
+
+def load_thresholds() -> dict:
+    """Load threshold boundaries from file."""
+    if THRESHOLDS_FILE.exists():
+        with open(THRESHOLDS_FILE) as f:
+            return json.load(f)
+    return {"complete": [], "single": []}
+
+
+def save_thresholds(thresholds: dict):
+    """Save threshold boundaries to file."""
+    with open(THRESHOLDS_FILE, "w") as f:
+        json.dump(thresholds, f, indent=2)
 
 
 def save_ratings(ratings: dict):
@@ -86,23 +101,33 @@ def hamming_distance(hash1: str, hash2: str) -> int:
     return bin(xor).count("1")
 
 
+_has_pairs_table_cache = None
+
 def has_pairs_table():
     """Check if photo_pairs table exists and has data."""
+    global _has_pairs_table_cache
+    if _has_pairs_table_cache is not None:
+        return _has_pairs_table_cache
+
     conn = get_connection()
     cursor = conn.execute("""
-        SELECT name FROM sqlite_master
+        SELECT 1 FROM sqlite_master
         WHERE type='table' AND name='photo_pairs'
     """)
     exists = cursor.fetchone() is not None
     if exists:
-        count = conn.execute("SELECT COUNT(*) FROM photo_pairs").fetchone()[0]
-        exists = count > 0
+        # Quick check for data - LIMIT 1 is instant vs COUNT(*) on 82M rows
+        row = conn.execute("SELECT 1 FROM photo_pairs LIMIT 1").fetchone()
+        exists = row is not None
     conn.close()
+    _has_pairs_table_cache = exists
     return exists
 
 
 # Cache for dynamically sampled pairs
 _dynamic_cache = None
+# Cache for 2D counts (expensive aggregation query)
+_2d_counts_cache = {}
 
 
 def sample_pairs_dynamically(sample_size: int = 3000):
@@ -512,10 +537,9 @@ def show_distance(mode, distance):
 
 
 def get_pairs_at_2d_point(phash16: int, colorhash: int, limit: int = 24):
-    """Get pairs in a region around (phash16, colorhash) coordinate."""
-    # Use a small range to get enough pairs
-    p_range = 2  # phash16 ± 2
-    c_range = 1  # colorhash ± 1
+    """Get pairs at exact (phash16, colorhash) coordinate."""
+    p_range = 0  # exact match
+    c_range = 0  # exact match
 
     if has_pairs_table():
         conn = get_connection()
@@ -549,8 +573,66 @@ def get_pairs_at_2d_point(phash16: int, colorhash: int, limit: int = 24):
         return result[:limit]
 
 
+_has_summary_table_cache = None
+
+def has_summary_table():
+    """Check if pair_count_summary table exists."""
+    global _has_summary_table_cache
+    if _has_summary_table_cache is not None:
+        return _has_summary_table_cache
+
+    conn = get_connection()
+    cursor = conn.execute("""
+        SELECT 1 FROM sqlite_master
+        WHERE type='table' AND name='pair_count_summary'
+    """)
+    _has_summary_table_cache = cursor.fetchone() is not None
+    conn.close()
+    return _has_summary_table_cache
+
+
 def get_2d_counts(include_same_group=False):
     """Get counts at each (phash16, colorhash) point for heatmap."""
+    global _2d_counts_cache
+    cache_key = "with_same" if include_same_group else "cross_only"
+    if cache_key in _2d_counts_cache:
+        return _2d_counts_cache[cache_key]
+
+    # Use summary table if available (much faster)
+    if has_summary_table():
+        conn = get_connection()
+        if include_same_group:
+            cursor = conn.execute("""
+                SELECT phash16_dist, colorhash_dist, same_primary_group, SUM(count) as cnt
+                FROM pair_count_summary
+                GROUP BY phash16_dist, colorhash_dist, same_primary_group
+            """)
+            cross_counts = {}
+            same_counts = {}
+            for row in cursor.fetchall():
+                key = (row['phash16_dist'], row['colorhash_dist'])
+                if row['same_primary_group']:
+                    same_counts[key] = row['cnt']
+                else:
+                    cross_counts[key] = row['cnt']
+            conn.close()
+            result = (cross_counts, same_counts)
+            _2d_counts_cache[cache_key] = result
+            return result
+        else:
+            cursor = conn.execute("""
+                SELECT phash16_dist, colorhash_dist, SUM(count) as cnt
+                FROM pair_count_summary
+                WHERE same_primary_group = 0
+                GROUP BY phash16_dist, colorhash_dist
+            """)
+            counts = {(row['phash16_dist'], row['colorhash_dist']): row['cnt']
+                      for row in cursor.fetchall()}
+            conn.close()
+            _2d_counts_cache[cache_key] = counts
+            return counts
+
+    # Fall back to photo_pairs table (slower)
     if has_pairs_table():
         conn = get_connection()
         if include_same_group:
@@ -569,7 +651,9 @@ def get_2d_counts(include_same_group=False):
                 else:
                     cross_counts[key] = row['cnt']
             conn.close()
-            return cross_counts, same_counts
+            result = (cross_counts, same_counts)
+            _2d_counts_cache[cache_key] = result
+            return result
         else:
             cursor = conn.execute("""
                 SELECT phash16_dist, colorhash_dist, COUNT(*) as cnt
@@ -580,6 +664,7 @@ def get_2d_counts(include_same_group=False):
             counts = {(row['phash16_dist'], row['colorhash_dist']): row['cnt']
                       for row in cursor.fetchall()}
             conn.close()
+            _2d_counts_cache[cache_key] = counts
             return counts
     else:
         all_pairs = get_dynamic_pairs()
@@ -589,7 +674,10 @@ def get_2d_counts(include_same_group=False):
             for p in pair_list:
                 counts[(phash16_dist, p["colorhash_dist"])] += 1
         if include_same_group:
-            return dict(counts), {}  # No same-group data in dynamic cache
+            result = (dict(counts), {})  # No same-group data in dynamic cache
+            _2d_counts_cache[cache_key] = result
+            return result
+        _2d_counts_cache[cache_key] = dict(counts)
         return dict(counts)
 
 
@@ -642,10 +730,11 @@ TEMPLATE_2D = """
         .rating-btn.active { outline: 2px solid #fff; }
 
         .pairs-grid {
-            display: flex;
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: repeat(4, auto);
             gap: 20px;
             margin-bottom: 15px;
+            justify-content: start;
         }
 
         .pair-cell {
@@ -656,9 +745,8 @@ TEMPLATE_2D = """
             border-radius: 4px;
         }
         .pair-cell img {
-            height: 90px;
-            width: auto;
-            max-width: 120px;
+            width: 100px;
+            height: 100px;
             object-fit: contain;
             image-orientation: from-image;
             background: #111;
@@ -770,6 +858,13 @@ TEMPLATE_2D = """
 
             window.location.href = '/2d/' + p + '/' + c;
         });
+
+        // Preload next cell's images for faster transitions
+        const preloadIds = {{ preload_ids | tojson }};
+        preloadIds.forEach(id => {
+            const img = new Image();
+            img.src = '/image/' + id;
+        });
     </script>
 </body>
 </html>
@@ -779,13 +874,29 @@ TEMPLATE_2D = """
 @app.route('/2d/<int:phash16>/<int:colorhash>')
 def show_2d(phash16, colorhash):
     """Show pairs at a specific 2D coordinate."""
+    import time
+    t0 = time.time()
     pairs = get_pairs_at_2d_point(phash16, colorhash, limit=24)
+    t1 = time.time()
     current_rating = get_rating(phash16, colorhash)
     ratings = load_ratings()
+    t2 = time.time()
 
     # Get cells with data for navigation
     counts = get_2d_counts()
+    t3 = time.time()
     cells_with_data = {f"{k[0]},{k[1]}": True for k in counts.keys()}
+
+    # Find next cell and preload its images
+    next_cell = find_next_unrated_cell(counts, ratings, phash16, colorhash)
+    preload_ids = []
+    if next_cell:
+        next_pairs = get_pairs_at_2d_point(next_cell[0], next_cell[1], limit=24)
+        for p in next_pairs:
+            preload_ids.append(p['photo_id_1'])
+            preload_ids.append(p['photo_id_2'])
+    t4 = time.time()
+    print(f"TIMING: pairs={t1-t0:.3f}s, ratings={t2-t1:.3f}s, counts={t3-t2:.3f}s, preload={t4-t3:.3f}s")
 
     return render_template_string(
         TEMPLATE_2D,
@@ -795,6 +906,7 @@ def show_2d(phash16, colorhash):
         current_rating=current_rating,
         cells_with_data=cells_with_data,
         ratings_json=ratings,
+        preload_ids=preload_ids,
     )
 
 
@@ -803,6 +915,32 @@ def rate_coordinate(phash16, colorhash, rating):
     """Record a rating for a coordinate."""
     if 1 <= rating <= 5:
         set_rating(phash16, colorhash, rating)
+    return "OK"
+
+
+@app.route('/threshold/<kind>/<int:phash16>/<int:colorhash>', methods=['POST'])
+def toggle_threshold(kind, phash16, colorhash):
+    """Toggle a cell as part of a threshold boundary."""
+    if kind not in ("complete", "single"):
+        return "Invalid kind", 400
+    thresholds = load_thresholds()
+    key = f"{phash16},{colorhash}"
+    if key in thresholds[kind]:
+        thresholds[kind].remove(key)
+    else:
+        thresholds[kind].append(key)
+    save_thresholds(thresholds)
+    return "OK"
+
+
+@app.route('/threshold/clear/<kind>', methods=['POST'])
+def clear_threshold(kind):
+    """Clear all cells from a threshold boundary."""
+    if kind not in ("complete", "single"):
+        return "Invalid kind", 400
+    thresholds = load_thresholds()
+    thresholds[kind] = []
+    save_thresholds(thresholds)
     return "OK"
 
 
@@ -941,33 +1079,51 @@ TEMPLATE_DIST = """
         }
         .header { background: #333; font-weight: bold; }
         .has-data { cursor: pointer; }
-        .heat-0 { background: #111; }
-        .heat-1 { background: #1a3a1a; }
-        .heat-2 { background: #2a5a2a; }
-        .heat-3 { background: #3a7a3a; }
-        .heat-4 { background: #5a9a5a; }
-        .heat-5 { background: #7aba7a; }
+        .cell-empty { background: #111 !important; }
+        .cell-unrated { background: #333 !important; }
+        /* Rating backgrounds: 1=good (green) to 5=bad (red) */
+        .cell-r1 { background: #1a5a1a !important; }
+        .cell-r2 { background: #4a6a1a !important; }
+        .cell-r3 { background: #6a6a1a !important; }
+        .cell-r4 { background: #6a4a1a !important; }
+        .cell-r5 { background: #6a1a1a !important; }
         .same-group { background: #224; }
         .same-heat-1 { background: #113; }
         .same-heat-2 { background: #226; }
         .same-heat-3 { background: #339; }
         .same-heat-4 { background: #44c; }
         .same-heat-5 { background: #55f; }
-        .rated { border: 2px solid; }
-        .rated-1 { border-color: #2a5; }
-        .rated-2 { border-color: #5a5; }
-        .rated-3 { border-color: #aa5; }
-        .rated-4 { border-color: #a55; }
-        .rated-5 { border-color: #a22; }
         .legend { margin-top: 15px; }
         .legend span { margin-right: 15px; }
         .tables { display: flex; gap: 40px; flex-wrap: wrap; }
         .table-section h3 { margin-top: 0; }
+        /* Threshold markers - computed edges */
+        .th-complete-right { border-right: 3px solid #fc0 !important; }
+        .th-complete-bottom { border-bottom: 3px solid #fc0 !important; }
+        .th-single-right { border-right: 3px solid #0ff !important; }
+        .th-single-bottom { border-bottom: 3px solid #0ff !important; }
+        /* For drawing mode - show which cells are marked */
+        .th-complete-marked { background: rgba(255, 204, 0, 0.3) !important; }
+        .th-single-marked { background: rgba(0, 255, 255, 0.3) !important; }
+        .threshold-legend { margin: 15px 0; }
+        .threshold-legend span { margin-right: 10px; }
     </style>
 </head>
 <body>
     <h2>2D Distribution: pHash16 (rows) × cHash (cols)</h2>
     <p>Click a cell to explore. Colored borders show your ratings. <a href="/auto/{{ min_phash16 }}/0">Start auto-scan</a> | <a href="/legacy-dist">legacy pHash×dHash map</a></p>
+    <div class="threshold-legend">
+        <span>Draw mode:</span>
+        <button id="mode-nav" onclick="setMode('nav')" class="mode-btn active">Navigate</button>
+        <button id="mode-complete" onclick="setMode('complete')" class="mode-btn" style="border-color:#fc0">Complete</button>
+        <button id="mode-single" onclick="setMode('single')" class="mode-btn" style="border-color:#0ff">Single</button>
+        <button onclick="clearThreshold('complete')" style="margin-left:20px">Clear Complete</button>
+        <button onclick="clearThreshold('single')">Clear Single</button>
+    </div>
+    <style>
+        .mode-btn { padding: 5px 10px; margin: 0 5px; border: 2px solid #666; background: #333; color: #eee; cursor: pointer; }
+        .mode-btn.active { background: #555; border-color: #aaa; }
+    </style>
 
     <div class="tables">
     <div class="table-section">
@@ -985,12 +1141,20 @@ TEMPLATE_DIST = """
             {% for c in range(max_colorhash + 1) %}
             {% set count = cross_counts.get((p, c), 0) + cross_counts.get((p+1, c), 0) %}
             {% set r = ratings.get(p|string + ',' + c|string) %}
+            {% set th_class = '' %}
+            {% set key = p|string + ',' + c|string %}
+            {% if key in complete_right %}{% set th_class = th_class + ' th-complete-right' %}{% endif %}
+            {% if key in complete_bottom %}{% set th_class = th_class + ' th-complete-bottom' %}{% endif %}
+            {% if key in single_right %}{% set th_class = th_class + ' th-single-right' %}{% endif %}
+            {% if key in single_bottom %}{% set th_class = th_class + ' th-single-bottom' %}{% endif %}
+            {% if key in thresholds.complete %}{% set th_class = th_class + ' th-complete-marked' %}{% endif %}
+            {% if key in thresholds.single %}{% set th_class = th_class + ' th-single-marked' %}{% endif %}
             {% if count > 0 %}
-            <td class="has-data heat-{{ [5, (count // 100) + 1] | min }} {% if r %}rated rated-{{ r }}{% endif %}" onclick="window.location='/2d/{{ p }}/{{ c }}'">
+            <td class="has-data {% if r %}cell-r{{ r }}{% else %}cell-unrated{% endif %}{{ th_class }}" data-p="{{ p }}" data-c="{{ c }}" onclick="cellClick({{ p }}, {{ c }})">
                 {{ count if count < 1000 else '1k+' }}
             </td>
             {% else %}
-            <td class="heat-0 {% if r %}rated rated-{{ r }}{% endif %}">·</td>
+            <td class="cell-empty{{ th_class }}" data-p="{{ p }}" data-c="{{ c }}" onclick="cellClick({{ p }}, {{ c }})">·</td>
             {% endif %}
             {% endfor %}
         </tr>
@@ -1037,6 +1201,36 @@ TEMPLATE_DIST = """
         <span class="rated-4" style="color:#a55">■ 4=few FN</span>
         <span class="rated-5" style="color:#a22">■ 5=bad</span>
     </div>
+
+    <script>
+        let drawMode = localStorage.getItem('drawMode') || 'nav';
+
+        // Restore mode on page load
+        document.addEventListener('DOMContentLoaded', () => setMode(drawMode));
+
+        function setMode(mode) {
+            drawMode = mode;
+            localStorage.setItem('drawMode', mode);
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('mode-' + mode).classList.add('active');
+        }
+
+        function cellClick(p, c) {
+            if (drawMode === 'nav') {
+                window.location = '/2d/' + p + '/' + c;
+            } else {
+                fetch('/threshold/' + drawMode + '/' + p + '/' + c, {method: 'POST'})
+                    .then(() => window.location.reload());
+            }
+        }
+
+        function clearThreshold(kind) {
+            if (confirm('Clear all ' + kind + ' boundary cells?')) {
+                fetch('/threshold/clear/' + kind, {method: 'POST'})
+                    .then(() => window.location.reload());
+            }
+        }
+    </script>
 </body>
 </html>
 """
@@ -1060,6 +1254,48 @@ def show_distribution():
     max_phash16 = min(max(k[0] for k in all_keys), 140)  # Cap display
     max_colorhash = min(max(k[1] for k in all_keys), 14)  # Cap display
     ratings = load_ratings()
+    thresholds = load_thresholds()
+
+    # Compute actual line edges from marked boundary cells
+    def compute_edges(marked_cells):
+        """Compute right/bottom edges from marked boundary cells.
+
+        Marked cells are the last INCLUDED cells. The line goes:
+        - Along the bottom of cells at each colorhash level
+        - Down the right side when stepping to a lower phash16
+        """
+        if not marked_cells:
+            return [], []
+
+        # Parse cells and find max phash16 for each colorhash
+        max_p_by_c = {}
+        for key in marked_cells:
+            p, c = map(int, key.split(','))
+            if c not in max_p_by_c or p > max_p_by_c[c]:
+                max_p_by_c[c] = p
+
+        right_edges = []  # cells needing right border
+        bottom_edges = []  # cells needing bottom border
+
+        sorted_c = sorted(max_p_by_c.keys())
+        for i, c in enumerate(sorted_c):
+            p = max_p_by_c[c]
+            # Bottom edge on the boundary cell
+            bottom_edges.append(f"{p},{c}")
+            # Right edge if next colorhash has lower max_p or doesn't exist
+            if i == len(sorted_c) - 1 or c + 1 not in max_p_by_c:
+                # Last colorhash - right edge on this cell
+                right_edges.append(f"{p},{c}")
+            elif max_p_by_c.get(c + 1, 0) < p:
+                # Next colorhash has lower threshold - draw right edges down
+                next_p = max_p_by_c[c + 1]
+                for pp in range(next_p + 2, p + 1, 2):
+                    right_edges.append(f"{pp},{c}")
+
+        return right_edges, bottom_edges
+
+    complete_right, complete_bottom = compute_edges(thresholds.get("complete", []))
+    single_right, single_bottom = compute_edges(thresholds.get("single", []))
 
     return render_template_string(
         TEMPLATE_DIST,
@@ -1069,11 +1305,43 @@ def show_distribution():
         max_phash16=max_phash16,
         max_colorhash=max_colorhash,
         ratings=ratings,
+        thresholds=thresholds,
+        complete_right=complete_right,
+        complete_bottom=complete_bottom,
+        single_right=single_right,
+        single_bottom=single_bottom,
     )
 
 
+_legacy_counts_cache = None
+
 def get_legacy_2d_counts():
     """Get counts at each (phash, dhash) point for the legacy hash distribution map."""
+    global _legacy_counts_cache
+    if _legacy_counts_cache is not None:
+        return _legacy_counts_cache
+
+    # Use summary table if available (much faster)
+    if has_summary_table():
+        conn = get_connection()
+        cursor = conn.execute("""
+            SELECT phash_dist, dhash_dist, same_primary_group, SUM(count) as cnt
+            FROM pair_count_summary
+            GROUP BY phash_dist, dhash_dist, same_primary_group
+        """)
+        cross_counts = {}
+        same_counts = {}
+        for row in cursor.fetchall():
+            key = (row['phash_dist'], row['dhash_dist'])
+            if row['same_primary_group']:
+                same_counts[key] = row['cnt']
+            else:
+                cross_counts[key] = row['cnt']
+        conn.close()
+        _legacy_counts_cache = (cross_counts, same_counts)
+        return _legacy_counts_cache
+
+    # Fall back to photo_pairs table (slower)
     if has_pairs_table():
         conn = get_connection()
         # Get both cross-group and same-group counts
@@ -1091,7 +1359,8 @@ def get_legacy_2d_counts():
             else:
                 cross_counts[key] = row['cnt']
         conn.close()
-        return cross_counts, same_counts
+        _legacy_counts_cache = (cross_counts, same_counts)
+        return _legacy_counts_cache
     return {}, {}
 
 

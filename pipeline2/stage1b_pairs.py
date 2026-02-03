@@ -225,7 +225,32 @@ def run_stage1b(clear_existing: bool = False) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_phash16 ON photo_pairs(phash16_dist)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_colorhash ON photo_pairs(colorhash_dist)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_same_group ON photo_pairs(same_primary_group)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pairs_2d ON photo_pairs(same_primary_group, phash16_dist, colorhash_dist)")
         conn.commit()
+
+        # Create summary table for fast threshold tuner queries
+        print("\nCreating pair count summary table...")
+        conn.execute("DROP TABLE IF EXISTS pair_count_summary")
+        conn.execute("""
+            CREATE TABLE pair_count_summary (
+                phash16_dist INTEGER NOT NULL,
+                colorhash_dist INTEGER NOT NULL,
+                phash_dist INTEGER NOT NULL,
+                dhash_dist INTEGER NOT NULL,
+                same_primary_group INTEGER NOT NULL,
+                count INTEGER NOT NULL,
+                PRIMARY KEY (phash16_dist, colorhash_dist, phash_dist, dhash_dist, same_primary_group)
+            ) WITHOUT ROWID
+        """)
+        conn.execute("""
+            INSERT INTO pair_count_summary
+            SELECT phash16_dist, colorhash_dist, phash_dist, dhash_dist, same_primary_group, COUNT(*)
+            FROM photo_pairs
+            GROUP BY phash16_dist, colorhash_dist, phash_dist, dhash_dist, same_primary_group
+        """)
+        conn.commit()
+        summary_count = conn.execute("SELECT COUNT(*) FROM pair_count_summary").fetchone()[0]
+        print(f"Summary table created with {summary_count:,} rows")
 
         # Record completion
         record_stage_completion(
