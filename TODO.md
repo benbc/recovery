@@ -10,11 +10,18 @@ Pipeline 1 done:
 - [x] Junk deletion review
 
 Pipeline 2 (post-curation):
-- [x] Secondary grouping stage implemented (pipeline2/stage1)
-- [ ] **Tune secondary grouping thresholds** - current run only found 110 groups, likely many more
+- [x] Stage 1: Extended hashes computed (phash_16, colorhash) for all 12,836 kept photos
+- [ ] **Stage 1b: Rerun pairwise distance computation** - previous run had incomplete data
+- [x] Threshold tuner tool built with 2D explorer, rating system, auto-scan
+- [ ] **Find exact 2D boundary** - map the phash16/colorhash decision boundary using ratings
+- [ ] **Implement two-stage clustering**: complete linkage first (tight cores), then single linkage (extend cores)
 - [ ] **Rerun group rules after secondary grouping** - will catch derivatives missed due to original grouping failures
-- [ ] Implement date derivation (pipeline2/stage2)
-- [ ] Implement export with date-based organization (pipeline2/stage3)
+- [ ] Implement date derivation (pipeline2/stage3)
+- [ ] Implement export with date-based organization (pipeline2/stage4)
+
+Threshold tuning progress:
+- Initial ratings recorded at phash16 88-92 range showing diagonal boundary
+- Same-group pairs (known duplicates) cluster at low distances - confirms approach
 
 ## Remaining Decisions
 
@@ -32,3 +39,4 @@ Pipeline 2 (post-curation):
 - [ ] **Directory coherence**: If X% of files in a directory are rejected, reject the rest too
 - [ ] **pHash aberrations**: Some completely different photos at distance 6-10 (rare, documented in RULES.md)
 - [ ] Archive old code in used-scripts/
+- [ ] **Multi-threading for expensive operations**: Hashing and pairwise distance computation are single-threaded. Consider parallelizing if we need to rerun these or similar operations.

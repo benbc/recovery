@@ -14,12 +14,14 @@ Works on the curated output of pipeline1 (after manual review).
 
 Stages:
   1. Rehash - compute extended hashes (phash_16, colorhash) for kept photos
+  1b. Pairs - compute all pairwise distances (for threshold tuning)
   2. Secondary grouping - merge primary groups and incorporate singles
   3. Date derivation - assign dates to photos/groups (not implemented)
   4. Organization - export with date-based structure (not implemented)
 
 Usage:
     ./run_pipeline2.py --stage 1     # Compute extended hashes
+    ./run_pipeline2.py --stage 1b    # Compute all pairwise distances
     ./run_pipeline2.py --stage 2     # Run secondary grouping
     ./run_pipeline2.py --status      # Show pipeline2 status
 """
@@ -117,6 +119,10 @@ def run_stage(stage: str, args: argparse.Namespace):
     if stage == "1":
         from pipeline2.stage1_rehash import run_stage1
         run_stage1(clear_existing=args.clear)
+
+    elif stage == "1b":
+        from pipeline2.stage1b_pairs import run_stage1b
+        run_stage1b(clear_existing=args.clear)
 
     elif stage == "2":
         from pipeline2.stage2_secondary_grouping import run_stage2

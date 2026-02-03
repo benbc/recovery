@@ -6,6 +6,6 @@ from pathlib import Path
 from pipeline.config import DB_PATH, FILES_DIR, EXPORT_DIR
 
 # Pipeline2 stages
-STAGE_ORDER = ["1", "2", "3", "4"]
+STAGE_ORDER = ["1", "1b", "2", "3", "4"]
 
 __all__ = ["DB_PATH", "FILES_DIR", "EXPORT_DIR", "STAGE_ORDER"]
