@@ -111,6 +111,11 @@ def run_stage1b(clear_existing: bool = False) -> None:
     print()
 
     with get_connection() as conn:
+        # Optimize for bulk inserts
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=OFF")
+        conn.execute("PRAGMA cache_size=-512000")  # 512MB cache
+
         # Create table
         if clear_existing:
             conn.execute("DROP TABLE IF EXISTS photo_pairs")
@@ -125,7 +130,7 @@ def run_stage1b(clear_existing: bool = False) -> None:
                 phash16_dist INTEGER NOT NULL,
                 colorhash_dist INTEGER NOT NULL,
                 PRIMARY KEY (photo_id_1, photo_id_2)
-            )
+            ) WITHOUT ROWID
         """)
         conn.commit()
 
@@ -173,7 +178,9 @@ def run_stage1b(clear_existing: bool = False) -> None:
         pair_count = 0
         same_group_count = 0
         batch = []
-        batch_size = 50000
+        batch_size = 500000  # Larger batches for fewer commits
+        commit_interval = 2000000  # Commit every 2M rows
+        rows_since_commit = 0
 
         with mp.Pool(num_workers, initializer=_init_worker, initargs=(photos,)) as pool:
             for results in tqdm(
@@ -181,31 +188,35 @@ def run_stage1b(clear_existing: bool = False) -> None:
                 total=num_chunks,
                 desc="Computing pairs"
             ):
-                for row in results:
-                    batch.append(row)
-                    pair_count += 1
-                    if row[2]:  # same_group flag
-                        same_group_count += 1
+                # Extend batch directly (faster than per-row append)
+                batch.extend(results)
+                pair_count += len(results)
+                same_group_count += sum(1 for r in results if r[2])
+                rows_since_commit += len(results)
 
-                    if len(batch) >= batch_size:
-                        conn.executemany("""
-                            INSERT OR REPLACE INTO photo_pairs
-                            (photo_id_1, photo_id_2, same_primary_group,
-                             phash_dist, dhash_dist, phash16_dist, colorhash_dist)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, batch)
+                if len(batch) >= batch_size:
+                    conn.executemany("""
+                        INSERT INTO photo_pairs
+                        (photo_id_1, photo_id_2, same_primary_group,
+                         phash_dist, dhash_dist, phash16_dist, colorhash_dist)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, batch)
+                    batch = []
+
+                    # Commit less frequently
+                    if rows_since_commit >= commit_interval:
                         conn.commit()
-                        batch = []
+                        rows_since_commit = 0
 
         # Insert remaining
         if batch:
             conn.executemany("""
-                INSERT OR REPLACE INTO photo_pairs
+                INSERT INTO photo_pairs
                 (photo_id_1, photo_id_2, same_primary_group,
                  phash_dist, dhash_dist, phash16_dist, colorhash_dist)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, batch)
-            conn.commit()
+        conn.commit()
 
         # Create indexes after bulk insert (faster)
         print("\nCreating indexes...")
