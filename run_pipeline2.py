@@ -1,0 +1,193 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = '>=3.13'
+# dependencies = [
+#   "pillow",
+#   "imagehash",
+#   "tqdm"
+# ]
+# ///
+"""
+Pipeline 2: Post-Curation Processing
+
+Works on the curated output of pipeline1 (after manual review).
+
+Stages:
+  1. Rehash - compute extended hashes (phash_16, colorhash) for kept photos
+  2. Secondary grouping - merge primary groups and incorporate singles
+  3. Date derivation - assign dates to photos/groups (not implemented)
+  4. Organization - export with date-based structure (not implemented)
+
+Usage:
+    ./run_pipeline2.py --stage 1     # Compute extended hashes
+    ./run_pipeline2.py --stage 2     # Run secondary grouping
+    ./run_pipeline2.py --status      # Show pipeline2 status
+"""
+
+import argparse
+import sys
+
+from pipeline.config import DB_PATH
+from pipeline.database import get_connection, init_db
+from pipeline2.config import STAGE_ORDER
+
+
+def show_status():
+    """Show current pipeline2 status."""
+    print("=" * 70)
+    print("PIPELINE2 STATUS")
+    print("=" * 70)
+    print()
+
+    if not DB_PATH.exists():
+        print("Database not found.")
+        return
+
+    with get_connection() as conn:
+        # Check for pipeline2 tables
+        cursor = conn.execute("""
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name='secondary_groups'
+        """)
+        has_secondary = cursor.fetchone() is not None
+
+        # Pipeline2 stage completion
+        cursor = conn.execute("""
+            SELECT stage, completed_at, photo_count, notes
+            FROM pipeline_state
+            WHERE stage LIKE 'p2_%'
+            ORDER BY stage
+        """)
+        stages = list(cursor.fetchall())
+
+        if stages:
+            print("Completed stages:")
+            for row in stages:
+                stage_num = row['stage'].replace('p2_', '')
+                print(f"  Stage {stage_num}: {row['completed_at']}")
+                print(f"           Count: {row['photo_count']:,}")
+                if row['notes']:
+                    print(f"           Notes: {row['notes']}")
+            print()
+
+        # Extended hashes stats
+        cursor = conn.execute("""
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name='extended_hashes'
+        """)
+        has_extended = cursor.fetchone() is not None
+
+        if has_extended:
+            eh_count = conn.execute(
+                "SELECT COUNT(*) FROM extended_hashes"
+            ).fetchone()[0]
+            print(f"Extended hashes:       {eh_count:,}")
+        else:
+            print("Extended hashes not yet computed.")
+
+        # Secondary grouping stats
+        if has_secondary:
+            sg_count = conn.execute(
+                "SELECT COUNT(DISTINCT secondary_group_id) FROM secondary_groups"
+            ).fetchone()[0]
+            sg_photos = conn.execute(
+                "SELECT COUNT(*) FROM secondary_groups"
+            ).fetchone()[0]
+            print(f"Secondary groups:      {sg_count:,}")
+            print(f"Photos in sec. groups: {sg_photos:,}")
+
+            # Check for unlinked pairs table
+            cursor = conn.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='secondary_unlinked_pairs'
+            """)
+            if cursor.fetchone():
+                unlinked = conn.execute(
+                    "SELECT COUNT(*) FROM secondary_unlinked_pairs"
+                ).fetchone()[0]
+                print(f"Unlinked pairs:        {unlinked:,}")
+        else:
+            print("Secondary grouping not yet run.")
+
+    print()
+
+
+def run_stage(stage: str, args: argparse.Namespace):
+    """Run a specific stage."""
+    if stage == "1":
+        from pipeline2.stage1_rehash import run_stage1
+        run_stage1(clear_existing=args.clear)
+
+    elif stage == "2":
+        from pipeline2.stage2_secondary_grouping import run_stage2
+        run_stage2(clear_existing=args.clear)
+
+    elif stage == "3":
+        print("Stage 3 (date derivation) not yet implemented.")
+        sys.exit(1)
+
+    elif stage == "4":
+        print("Stage 4 (organization/export) not yet implemented.")
+        sys.exit(1)
+
+    else:
+        print(f"Unknown stage: {stage}")
+        sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Pipeline 2: Post-Curation Processing",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__
+    )
+
+    # Stage selection
+    stage_group = parser.add_mutually_exclusive_group()
+    stage_group.add_argument(
+        "--stage", type=str, choices=STAGE_ORDER,
+        help="Run a single stage"
+    )
+    stage_group.add_argument(
+        "--from-stage", type=str, choices=STAGE_ORDER,
+        help="Run from this stage to the end"
+    )
+    stage_group.add_argument(
+        "--status", action="store_true",
+        help="Show pipeline2 status"
+    )
+
+    # General options
+    parser.add_argument(
+        "--clear", action="store_true",
+        help="Clear existing data before running stage"
+    )
+
+    args = parser.parse_args()
+
+    # Show status
+    if args.status:
+        show_status()
+        return
+
+    # Validate we have a stage to run
+    if args.stage is None and args.from_stage is None:
+        parser.print_help()
+        print("\nError: Specify --stage, --from-stage, or --status")
+        sys.exit(1)
+
+    # Initialize database (ensures schema exists)
+    init_db()
+
+    # Run stage(s)
+    if args.stage:
+        run_stage(args.stage, args)
+    else:
+        # Run from specified stage to end
+        start_idx = STAGE_ORDER.index(args.from_stage)
+        for stage in STAGE_ORDER[start_idx:]:
+            run_stage(stage, args)
+
+
+if __name__ == "__main__":
+    main()

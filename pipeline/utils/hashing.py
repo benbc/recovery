@@ -65,6 +65,27 @@ def compute_hashes(file_path: Path) -> tuple[Optional[str], Optional[str]]:
         return (None, None)
 
 
+def compute_extended_hashes(file_path: Path) -> dict[str, Optional[str]]:
+    """
+    Compute extended hashes for more discriminative matching.
+
+    Returns dict with:
+    - phash_16: 16x16 pHash (256 bits vs default 64 bits)
+    - colorhash: color-aware hash (captures color distribution)
+
+    These complement the standard pHash/dHash for reducing false positives.
+    """
+    result = {"phash_16": None, "colorhash": None}
+    try:
+        with Image.open(file_path) as img:
+            img = ImageOps.exif_transpose(img)
+            result["phash_16"] = str(imagehash.phash(img, hash_size=16))
+            result["colorhash"] = str(imagehash.colorhash(img))
+    except Exception:
+        pass
+    return result
+
+
 def hamming_distance(hash1: str, hash2: str) -> int:
     """
     Calculate hamming distance between two hex hash strings.

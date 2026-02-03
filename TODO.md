@@ -2,22 +2,19 @@
 
 ## Current State
 
-**About to rerun full pipeline** with enriched date extraction schema.
+**Pipeline 1 complete, manual curation done, working on pipeline 2 (secondary grouping).**
 
-Changes made:
-- [x] Enriched EXIF extraction (make, model, software, all date fields)
-- [x] Multiple date sources per photo (photo_date_sources table)
-- [x] Path-based date parsing (semantic patterns like "Xmas 2004", "April 2010")
-- [x] Filename-based date parsing (enhanced patterns)
-- [x] Confidence levels for dates (high/medium/low/suspect/unusable)
-- [x] IPHOTO_COPY rule flipped to prefer iPhoto (EXIF preserved better)
-- [x] Stage 6 removed (needs date assignment logic first)
+Pipeline 1 done:
+- [x] Full pipeline run with enriched date extraction
+- [x] Manual group review (971 groups reviewed, 61 splits)
+- [x] Junk deletion review
 
-Next:
-- [ ] Rerun pipeline from Stage 1
-- [ ] Implement dynamic date selection function (for groups)
-- [ ] Design export with date-based organization
-- [ ] Implement Stage 6: Export
+Pipeline 2 (post-curation):
+- [x] Secondary grouping stage implemented (pipeline2/stage1)
+- [ ] **Tune secondary grouping thresholds** - current run only found 110 groups, likely many more
+- [ ] **Rerun group rules after secondary grouping** - will catch derivatives missed due to original grouping failures
+- [ ] Implement date derivation (pipeline2/stage2)
+- [ ] Implement export with date-based organization (pipeline2/stage3)
 
 ## Remaining Decisions
 
