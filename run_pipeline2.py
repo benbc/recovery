@@ -15,14 +15,12 @@ Works on the curated output of pipeline1 (after manual review).
 Stages:
   1. Rehash - compute extended hashes (phash_16, colorhash) for kept photos
   1b. Pairs - compute all pairwise distances (for threshold tuning)
-  2. Secondary grouping - merge primary groups and incorporate singles
-  3. Date derivation - assign dates to photos/groups (not implemented)
-  4. Organization - export with date-based structure (not implemented)
+  2. Regroup - two-stage clustering with tuned pHash16+colorHash thresholds
 
 Usage:
     ./run_pipeline2.py --stage 1     # Compute extended hashes
     ./run_pipeline2.py --stage 1b    # Compute all pairwise distances
-    ./run_pipeline2.py --stage 2     # Run secondary grouping
+    ./run_pipeline2.py --stage 2     # Regroup with tuned thresholds
     ./run_pipeline2.py --status      # Show pipeline2 status
 """
 
@@ -46,13 +44,6 @@ def show_status():
         return
 
     with get_connection() as conn:
-        # Check for pipeline2 tables
-        cursor = conn.execute("""
-            SELECT name FROM sqlite_master
-            WHERE type='table' AND name='secondary_groups'
-        """)
-        has_secondary = cursor.fetchone() is not None
-
         # Pipeline2 stage completion
         cursor = conn.execute("""
             SELECT stage, completed_at, photo_count, notes
@@ -87,29 +78,35 @@ def show_status():
         else:
             print("Extended hashes not yet computed.")
 
-        # Secondary grouping stats
-        if has_secondary:
-            sg_count = conn.execute(
-                "SELECT COUNT(DISTINCT secondary_group_id) FROM secondary_groups"
+        # p2_groups stats
+        cursor = conn.execute("""
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name='p2_groups'
+        """)
+        has_p2_groups = cursor.fetchone() is not None
+
+        if has_p2_groups:
+            group_count = conn.execute(
+                "SELECT COUNT(DISTINCT group_id) FROM p2_groups"
             ).fetchone()[0]
-            sg_photos = conn.execute(
-                "SELECT COUNT(*) FROM secondary_groups"
+            photo_count = conn.execute(
+                "SELECT COUNT(*) FROM p2_groups"
             ).fetchone()[0]
-            print(f"Secondary groups:      {sg_count:,}")
-            print(f"Photos in sec. groups: {sg_photos:,}")
+            print(f"P2 groups:             {group_count:,}")
+            print(f"Photos in P2 groups:   {photo_count:,}")
 
             # Check for unlinked pairs table
             cursor = conn.execute("""
                 SELECT name FROM sqlite_master
-                WHERE type='table' AND name='secondary_unlinked_pairs'
+                WHERE type='table' AND name='p2_unlinked_pairs'
             """)
             if cursor.fetchone():
                 unlinked = conn.execute(
-                    "SELECT COUNT(*) FROM secondary_unlinked_pairs"
+                    "SELECT COUNT(*) FROM p2_unlinked_pairs"
                 ).fetchone()[0]
                 print(f"Unlinked pairs:        {unlinked:,}")
         else:
-            print("Secondary grouping not yet run.")
+            print("Regrouping not yet run.")
 
     print()
 
@@ -125,16 +122,8 @@ def run_stage(stage: str, args: argparse.Namespace):
         run_stage1b(clear_existing=args.clear)
 
     elif stage == "2":
-        from pipeline2.stage2_secondary_grouping import run_stage2
-        run_stage2(clear_existing=args.clear)
-
-    elif stage == "3":
-        print("Stage 3 (date derivation) not yet implemented.")
-        sys.exit(1)
-
-    elif stage == "4":
-        print("Stage 4 (organization/export) not yet implemented.")
-        sys.exit(1)
+        from pipeline2.stage2_regroup import run_stage2
+        run_stage2()
 
     else:
         print(f"Unknown stage: {stage}")
