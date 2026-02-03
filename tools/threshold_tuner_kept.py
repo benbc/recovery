@@ -967,7 +967,7 @@ TEMPLATE_DIST = """
 </head>
 <body>
     <h2>2D Distribution: pHash16 (rows) × cHash (cols)</h2>
-    <p>Click a cell to explore. Colored borders show your ratings. <a href="/auto/{{ min_phash16 }}/0">Start auto-scan</a></p>
+    <p>Click a cell to explore. Colored borders show your ratings. <a href="/auto/{{ min_phash16 }}/0">Start auto-scan</a> | <a href="/legacy-dist">legacy pHash×dHash map</a></p>
 
     <div class="tables">
     <div class="table-section">
@@ -1069,6 +1069,164 @@ def show_distribution():
         max_phash16=max_phash16,
         max_colorhash=max_colorhash,
         ratings=ratings,
+    )
+
+
+def get_legacy_2d_counts():
+    """Get counts at each (phash, dhash) point for the legacy hash distribution map."""
+    if has_pairs_table():
+        conn = get_connection()
+        # Get both cross-group and same-group counts
+        cursor = conn.execute("""
+            SELECT phash_dist, dhash_dist, same_primary_group, COUNT(*) as cnt
+            FROM photo_pairs
+            GROUP BY phash_dist, dhash_dist, same_primary_group
+        """)
+        cross_counts = {}
+        same_counts = {}
+        for row in cursor.fetchall():
+            key = (row['phash_dist'], row['dhash_dist'])
+            if row['same_primary_group']:
+                same_counts[key] = row['cnt']
+            else:
+                cross_counts[key] = row['cnt']
+        conn.close()
+        return cross_counts, same_counts
+    return {}, {}
+
+
+TEMPLATE_LEGACY_DIST = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Legacy Hash Distribution</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #1a1a1a;
+            color: #eee;
+            padding: 20px;
+        }
+        a { color: #6cf; }
+        h3 { margin-top: 30px; }
+        table { border-collapse: collapse; }
+        td {
+            width: 26px;
+            height: 18px;
+            text-align: center;
+            font-size: 9px;
+            position: relative;
+        }
+        .header { background: #333; font-weight: bold; }
+        .heat-0 { background: #111; }
+        .heat-1 { background: #1a3a1a; }
+        .heat-2 { background: #2a5a2a; }
+        .heat-3 { background: #3a7a3a; }
+        .heat-4 { background: #5a9a5a; }
+        .heat-5 { background: #7aba7a; }
+        .same-heat-1 { background: #113; }
+        .same-heat-2 { background: #226; }
+        .same-heat-3 { background: #339; }
+        .same-heat-4 { background: #44c; }
+        .same-heat-5 { background: #55f; }
+        .tables { display: flex; gap: 40px; flex-wrap: wrap; }
+        .table-section h3 { margin-top: 0; }
+        .nav { margin-bottom: 20px; }
+        .nav a { margin-right: 15px; }
+    </style>
+</head>
+<body>
+    <h2>Legacy Hash Distribution: pHash (rows) × dHash (cols)</h2>
+    <div class="nav">
+        <a href="/dist">← phash16 × colorhash map</a>
+        <a href="/">explorer</a>
+    </div>
+    <p style="color:#888">For validation only - shows where existing groups fall in the old hash space</p>
+
+    <div class="tables">
+    <div class="table-section">
+    <h3>Cross-group pairs (green = more pairs)</h3>
+    <table>
+        <tr>
+            <td class="header">p\\d</td>
+            {% for d in range(max_dhash + 1) %}
+            <td class="header">{{ d }}</td>
+            {% endfor %}
+        </tr>
+        {% for p in range(min_phash, max_phash + 1) %}
+        <tr>
+            <td class="header">{{ p }}</td>
+            {% for d in range(max_dhash + 1) %}
+            {% set count = cross_counts.get((p, d), 0) %}
+            {% if count > 0 %}
+            <td class="heat-{{ [5, (count // 500) + 1] | min }}">
+                {{ count if count < 1000 else (count // 1000)|string + 'k' }}
+            </td>
+            {% else %}
+            <td class="heat-0">·</td>
+            {% endif %}
+            {% endfor %}
+        </tr>
+        {% endfor %}
+    </table>
+    </div>
+
+    {% if same_counts %}
+    <div class="table-section">
+    <h3>Same-group pairs (blue = more pairs)</h3>
+    <p style="color:#888;font-size:0.9em">Known duplicates - validates grouping thresholds</p>
+    <table>
+        <tr>
+            <td class="header">p\\d</td>
+            {% for d in range(max_dhash + 1) %}
+            <td class="header">{{ d }}</td>
+            {% endfor %}
+        </tr>
+        {% for p in range(min_phash, max_phash + 1) %}
+        <tr>
+            <td class="header">{{ p }}</td>
+            {% for d in range(max_dhash + 1) %}
+            {% set count = same_counts.get((p, d), 0) %}
+            {% if count > 0 %}
+            <td class="same-heat-{{ [5, (count // 50) + 1] | min }}">
+                {{ count if count < 1000 else (count // 1000)|string + 'k' }}
+            </td>
+            {% else %}
+            <td class="heat-0">·</td>
+            {% endif %}
+            {% endfor %}
+        </tr>
+        {% endfor %}
+    </table>
+    </div>
+    {% endif %}
+    </div>
+</body>
+</html>
+"""
+
+
+@app.route('/legacy-dist')
+def show_legacy_distribution():
+    """Show 2D distribution heatmap for legacy phash × dhash."""
+    cross_counts, same_counts = get_legacy_2d_counts()
+
+    if not cross_counts and not same_counts:
+        return "No data yet. Run stage 1b first.", 200
+
+    all_keys = set(cross_counts.keys()) | set(same_counts.keys())
+    # Focus on the interesting range where grouping happens
+    min_phash = 0
+    max_phash = min(max(k[0] for k in all_keys), 30)  # Cap at 30
+    max_dhash = min(max(k[1] for k in all_keys), 35)  # Cap at 35
+
+    return render_template_string(
+        TEMPLATE_LEGACY_DIST,
+        cross_counts=cross_counts,
+        same_counts=same_counts,
+        min_phash=min_phash,
+        max_phash=max_phash,
+        max_dhash=max_dhash,
     )
 
 

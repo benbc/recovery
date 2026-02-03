@@ -40,3 +40,4 @@ Threshold tuning progress:
 - [ ] **pHash aberrations**: Some completely different photos at distance 6-10 (rare, documented in RULES.md)
 - [ ] Archive old code in used-scripts/
 - [ ] **Multi-threading for expensive operations**: Hashing and pairwise distance computation are single-threaded. Consider parallelizing if we need to rerun these or similar operations.
+- [ ] **Stage 1b bulk insert optimization**: Current WITHOUT ROWID table requires maintaining sorted primary key during inserts, causing slowdown as table grows (9 it/s → 2 it/s). For future runs, consider: (a) use regular table and add unique index after bulk insert, or (b) pre-sort pairs before inserting for sequential B-tree writes.
