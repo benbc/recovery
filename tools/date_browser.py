@@ -68,6 +68,28 @@ def get_date_for_display(date_value: str | None) -> str:
     return date_value[:10]
 
 
+def get_quality(width: int | None, height: int | None) -> str:
+    """Determine photo quality based on resolution."""
+    if not width or not height:
+        return "unknown"
+    pixels = width * height
+    if pixels >= 2_000_000:
+        return "high"
+    elif pixels >= 500_000:
+        return "medium"
+    else:
+        return "low"
+
+
+def get_photo_dimensions(conn, photo_id: str) -> tuple[int | None, int | None]:
+    """Get width and height for a photo."""
+    cursor = conn.execute("SELECT width, height FROM photos WHERE id = ?", (photo_id,))
+    row = cursor.fetchone()
+    if row:
+        return row[0], row[1]
+    return None, None
+
+
 def get_all_dates_with_groups(conn) -> list[str]:
     """Get all unique dates that have groups or singletons, sorted chronologically."""
     return get_cache(conn)['dates_list']
@@ -159,6 +181,10 @@ def build_date_cache(conn) -> dict:
     by_date = defaultdict(list)
     date_info = {}
 
+    # Pre-fetch all photo dimensions for quality calculation
+    cursor = conn.execute("SELECT id, width, height FROM photos")
+    photo_dims = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+
     # Get all composite groups with their photos
     cursor = conn.execute("""
         SELECT group_id, photo_id FROM composite_groups ORDER BY group_id
@@ -173,12 +199,15 @@ def build_date_cache(conn) -> dict:
         group_id_str = f'G_{group_id}'
         date_info[group_id_str] = result
         date_str = get_date_for_display(result.date_value)
+        rep_photo = photo_ids[0]
+        w, h = photo_dims.get(rep_photo, (None, None))
         by_date[date_str].append({
             'group_id': group_id_str,
-            'representative_photo_id': photo_ids[0],
+            'representative_photo_id': rep_photo,
             'photo_count': len(photo_ids),
             'date_value': result.date_value,
             'confidence': result.confidence,
+            'quality': get_quality(w, h),
         })
 
     # Get singletons
@@ -196,17 +225,19 @@ def build_date_cache(conn) -> dict:
         group_id_str = f'S_{photo_id}'
         date_info[group_id_str] = result
         date_str = get_date_for_display(result.date_value)
+        w, h = photo_dims.get(photo_id, (None, None))
         by_date[date_str].append({
             'group_id': group_id_str,
             'representative_photo_id': photo_id,
             'photo_count': 1,
             'date_value': result.date_value,
             'confidence': result.confidence,
+            'quality': get_quality(w, h),
         })
 
-    # Sort dates (unknown last), skip dates with only one group/photo (nothing to merge)
-    dates_list = sorted([d for d in by_date.keys() if d != "unknown" and len(by_date[d]) > 1])
-    if "unknown" in by_date and len(by_date["unknown"]) > 1:
+    # Sort dates (unknown last)
+    dates_list = sorted([d for d in by_date.keys() if d != "unknown"])
+    if "unknown" in by_date:
         dates_list.append("unknown")
 
     # Sort items within each date
@@ -349,16 +380,43 @@ TEMPLATE = """
             margin-bottom: 4px;
             font-size: 0.75em;
         }
-        .group-count {
-            background: #333;
-            padding: 2px 6px;
-            border-radius: 4px;
+        .group-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+            font-size: 0.75em;
         }
-        .group.selected .group-count { background: #059669; }
-        .group-confidence { color: #666; }
-        .group-confidence.high { color: #22c55e; }
-        .group-confidence.medium { color: #eab308; }
-        .group-confidence.low { color: #ef4444; }
+        .group-icons {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .stack-icon {
+            font-size: 1.1em;
+            opacity: 0.7;
+        }
+        .star-btn {
+            background: #333;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1.1em;
+            padding: 3px 6px;
+            opacity: 0.7;
+            transition: opacity 0.15s, background 0.15s;
+        }
+        .star-btn:hover { opacity: 1; background: #444; }
+        .star-btn.starred { opacity: 1; color: #fbbf24; background: #433; }
+        .quality {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .quality.high { background: #22c55e; }
+        .quality.medium { background: #eab308; }
+        .quality.low { background: #ef4444; }
 
         .group img {
             width: 100%;
@@ -394,6 +452,7 @@ TEMPLATE = """
 </head>
 <body>
     <div class="header">
+        <a class="nav-btn" href="/" title="Back to calendar">📅</a>
         <div class="date-nav">
             <button class="nav-btn" onclick="prevDate()" {{ 'disabled' if not has_prev else '' }} title="Previous date (←)">← Prev</button>
             <div class="current-date">{{ current_date }}</div>
@@ -402,8 +461,6 @@ TEMPLATE = """
 
         <div class="date-info">
             {{ date_index + 1 }} / {{ total_dates }} dates
-            &nbsp;|&nbsp;
-            {{ date_range }}
         </div>
 
         <div class="selection-info" id="selectionInfo">
@@ -413,6 +470,7 @@ TEMPLATE = """
         <button class="merge-btn" id="mergeBtn" onclick="mergeSelected()" disabled title="Merge selected (m)">
             Merge (m)
         </button>
+        <a class="nav-btn" href="/favourites" title="Favourites" style="color: #fbbf24;">★</a>
     </div>
 
     <div class="help">
@@ -432,8 +490,16 @@ TEMPLATE = """
                  onclick="toggleGroup(this)"
                  ondblclick="viewGroup(this)">
                 <div class="group-header">
-                    <span class="group-count">{{ group.photo_count }}</span>
-                    <span class="group-confidence {{ group.confidence or '' }}">{{ group.confidence or '?' }}</span>
+                    <div class="group-icons">
+                        {% if group.group_id.startswith('G_') %}
+                        <span class="stack-icon" title="Group ({{ group.photo_count }} photos)">&#x1F4DA;</span>
+                        {% else %}
+                        <button class="star-btn {{ 'starred' if group.representative_photo_id in favourites else '' }}"
+                                onclick="event.stopPropagation(); toggleStar('{{ group.representative_photo_id }}', this)"
+                                title="Add to favourites">★</button>
+                        {% endif %}
+                    </div>
+                    <span class="quality {{ group.quality }}" title="{{ group.quality }} resolution"></span>
                 </div>
                 <img src="/image/{{ group.representative_photo_id }}" alt="">
             </div>
@@ -526,6 +592,21 @@ TEMPLATE = """
             });
         }
 
+        function toggleStar(photoId, btn) {
+            const isStarred = btn.classList.contains('starred');
+            fetch('/api/favourite', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ photo_id: photoId, starred: !isStarred })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    btn.classList.toggle('starred', data.starred);
+                }
+            });
+        }
+
         document.addEventListener('keydown', (e) => {
             if (e.target.tagName === 'INPUT') return;
 
@@ -554,16 +635,220 @@ TEMPLATE = """
 """
 
 
+CALENDAR_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Photo Calendar - {{ year }}</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: system-ui, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #eee;
+            margin: 0;
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .nav-btn {
+            padding: 8px 16px;
+            background: #333;
+            border: none;
+            border-radius: 5px;
+            color: #eee;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .nav-btn:hover { background: #444; }
+        .nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        h1 { margin: 0; font-size: 1.8em; font-weight: 600; }
+        .fav-link {
+            margin-left: auto;
+            color: #fbbf24;
+            text-decoration: none;
+            font-size: 1.2em;
+        }
+        .fav-link:hover { opacity: 0.8; }
+        .year-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            max-width: 900px;
+        }
+        @media (max-width: 900px) {
+            .year-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 600px) {
+            .year-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        .month {
+            background: #222;
+            border-radius: 6px;
+            padding: 8px;
+        }
+        .month-name {
+            font-weight: 600;
+            font-size: 0.85em;
+            margin-bottom: 6px;
+            text-align: center;
+        }
+        .days-header {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 1px;
+            margin-bottom: 2px;
+        }
+        .day-header {
+            text-align: center;
+            font-size: 0.6em;
+            color: #666;
+        }
+        .days {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 1px;
+        }
+        .day {
+            aspect-ratio: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.65em;
+            border-radius: 3px;
+            color: #666;
+            text-decoration: none;
+        }
+        .day.has-photos {
+            background: #059669;
+            color: #fff;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .day.has-photos:hover {
+            background: #047857;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        {% if has_prev %}
+        <a class="nav-btn" href="/calendar/{{ year - 1 }}">← {{ year - 1 }}</a>
+        {% else %}
+        <button class="nav-btn" disabled>← Prev</button>
+        {% endif %}
+        <h1>{{ year }}</h1>
+        {% if has_next %}
+        <a class="nav-btn" href="/calendar/{{ year + 1 }}">{{ year + 1 }} →</a>
+        {% else %}
+        <button class="nav-btn" disabled>Next →</button>
+        {% endif %}
+        <a class="fav-link" href="/favourites" title="Favourites">★ Favourites</a>
+    </div>
+    <div class="year-grid">
+        {% for month in months %}
+        <div class="month">
+            <div class="month-name">{{ month.name }}</div>
+            <div class="days-header">
+                <div class="day-header">M</div>
+                <div class="day-header">T</div>
+                <div class="day-header">W</div>
+                <div class="day-header">T</div>
+                <div class="day-header">F</div>
+                <div class="day-header">S</div>
+                <div class="day-header">S</div>
+            </div>
+            <div class="days">
+                {% for day in month.days %}
+                {% if day.num == 0 %}
+                <div class="day"></div>
+                {% elif day.date in photo_dates %}
+                <a class="day has-photos" href="/date/{{ day.date }}">{{ day.num }}</a>
+                {% else %}
+                <div class="day">{{ day.num }}</div>
+                {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</body>
+</html>
+"""
+
+
+def build_calendar_data(year: int) -> list[dict]:
+    """Build calendar data for a year - 12 months with day grids."""
+    import calendar
+    month_names = ['January', 'February', 'March', 'April', 'May', 'June',
+                   'July', 'August', 'September', 'October', 'November', 'December']
+    months = []
+    for month_num in range(1, 13):
+        cal = calendar.Calendar(firstweekday=0)  # Monday first
+        days = []
+        for day in cal.itermonthdays(year, month_num):
+            if day == 0:
+                days.append({'num': 0, 'date': None})
+            else:
+                date_str = f"{year}-{month_num:02d}-{day:02d}"
+                days.append({'num': day, 'date': date_str})
+        months.append({'name': month_names[month_num - 1], 'days': days})
+    return months
+
+
 @app.route('/')
 def index():
-    """Redirect to first date."""
+    """Redirect to calendar for earliest year with photos."""
     conn = get_connection()
     dates = get_all_dates_with_groups(conn)
     conn.close()
 
     if dates:
-        return redirect(f'/date/{dates[0]}')
-    return "No dates found", 404
+        # Find earliest year
+        for d in dates:
+            if d != 'unknown' and len(d) >= 4:
+                year = int(d[:4])
+                return redirect(f'/calendar/{year}')
+    return redirect('/calendar/2020')
+
+
+@app.route('/calendar/<int:year>')
+def show_calendar(year: int):
+    """Show calendar view for a year."""
+    conn = get_connection()
+    dates = get_all_dates_with_groups(conn)
+    conn.close()
+
+    # Get set of dates with photos (just YYYY-MM-DD format)
+    photo_dates = {d for d in dates if d != 'unknown' and len(d) == 10}
+
+    # Find year range
+    years_with_photos = set()
+    for d in dates:
+        if d != 'unknown' and len(d) >= 4:
+            try:
+                years_with_photos.add(int(d[:4]))
+            except ValueError:
+                pass
+
+    min_year = min(years_with_photos) if years_with_photos else year
+    max_year = max(years_with_photos) if years_with_photos else year
+
+    months = build_calendar_data(year)
+
+    return render_template_string(
+        CALENDAR_TEMPLATE,
+        year=year,
+        months=months,
+        photo_dates=photo_dates,
+        has_prev=year > min_year,
+        has_next=year < max_year,
+    )
 
 
 @app.route('/date/<path:date>')
@@ -578,6 +863,7 @@ def show_date(date: str):
 
     date_index = dates.index(date)
     groups = get_groups_for_date(conn, date)
+    favourites = get_favourites(conn)
     conn.close()
 
     # Navigation
@@ -601,6 +887,7 @@ def show_date(date: str):
         total_dates=len(dates),
         date_range=date_range,
         groups=groups,
+        favourites=favourites,
         has_prev=has_prev,
         has_next=has_next,
         prev_date=prev_date,
@@ -643,6 +930,11 @@ def api_split():
 
     conn = get_connection()
 
+    # Get the date for this group BEFORE splitting (for redirect)
+    cache = get_cache(conn)
+    date_info = cache['date_info'].get(group_id)
+    back_date = get_date_for_display(date_info.date_value) if date_info else 'unknown'
+
     # Get current group size
     cursor = conn.execute("SELECT COUNT(*) FROM composite_groups WHERE group_id = ?", (gid,))
     group_size = cursor.fetchone()[0]
@@ -667,13 +959,58 @@ def api_split():
             [new_group_id] + photo_ids
         )
 
+    # Check if original group now has only 1 photo - if so, make it a singleton too
+    cursor = conn.execute("SELECT COUNT(*), photo_id FROM composite_groups WHERE group_id = ?", (gid,))
+    row = cursor.fetchone()
+    group_dissolved = row[0] == 1
+    if group_dissolved:
+        # Only 1 photo left - convert to singleton
+        conn.execute("DELETE FROM composite_groups WHERE group_id = ?", (gid,))
+
     conn.commit()
     conn.close()
 
     # Invalidate cache
     invalidate_cache()
 
-    return jsonify({'success': True, 'split_count': len(photo_ids)})
+    return jsonify({
+        'success': True,
+        'split_count': len(photo_ids),
+        'group_dissolved': group_dissolved,
+        'redirect_date': back_date,
+    })
+
+
+@app.route('/api/favourite', methods=['POST'])
+def api_favourite():
+    """Add or remove a photo from favourites."""
+    data = request.json
+    photo_id = data.get('photo_id')
+    starred = data.get('starred', True)
+
+    if not photo_id:
+        return jsonify({'success': False, 'error': 'Missing photo_id'})
+
+    conn = get_connection()
+
+    if starred:
+        conn.execute(
+            "INSERT OR IGNORE INTO favourite_photos (photo_id) VALUES (?)",
+            (photo_id,)
+        )
+    else:
+        conn.execute("DELETE FROM favourite_photos WHERE photo_id = ?", (photo_id,))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({'success': True, 'starred': starred})
+
+
+def get_favourites(conn) -> set:
+    """Get all favourited photo IDs."""
+    cursor = conn.execute("SELECT photo_id FROM favourite_photos")
+    return {row[0] for row in cursor.fetchall()}
 
 
 @app.route('/api/merge', methods=['POST'])
@@ -762,6 +1099,32 @@ GROUP_DETAIL_TEMPLATE = """
             background: #111;
             border-radius: 6px;
         }
+        .photo-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+        .star-btn {
+            background: #333;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1.3em;
+            padding: 4px 8px;
+            opacity: 0.7;
+            transition: opacity 0.15s, background 0.15s;
+        }
+        .star-btn:hover { opacity: 1; background: #444; }
+        .star-btn.starred { opacity: 1; color: #fbbf24; background: #433; }
+        .quality {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        .quality.high { background: #22c55e; }
+        .quality.medium { background: #eab308; }
+        .quality.low { background: #ef4444; }
         .photo-info {
             font-size: 0.8em;
             color: #888;
@@ -782,10 +1145,16 @@ GROUP_DETAIL_TEMPLATE = """
         <div class="selection-info" id="selectionInfo">0 selected</div>
         <button class="split-btn" id="splitBtn" onclick="splitSelected()" disabled>Split Selected</button>
     </div>
-    <div class="help">Click photos to select, then click "Split Selected" to move them to a new group</div>
+    <div class="help">Click photos to select for splitting. Click ★ to add to favourites.</div>
     <div class="photos">
         {% for photo in photos %}
         <div class="photo" data-photo-id="{{ photo.id }}" onclick="togglePhoto(this)">
+            <div class="photo-header">
+                <span class="quality {{ photo.quality }}" title="{{ photo.quality }} resolution"></span>
+                <button class="star-btn {{ 'starred' if photo.id in favourites else '' }}"
+                        onclick="event.stopPropagation(); toggleStar('{{ photo.id }}', this)"
+                        title="Add to favourites">★</button>
+            </div>
             <img src="/image/{{ photo.id }}" alt="">
             <div class="photo-info">{{ photo.path }}</div>
         </div>
@@ -829,10 +1198,30 @@ GROUP_DETAIL_TEMPLATE = """
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
-                    // Reload to show updated group
-                    window.location.reload();
+                    if (data.group_dissolved) {
+                        // Group no longer exists, go back to date
+                        window.location.href = '/date/' + encodeURIComponent(data.redirect_date);
+                    } else {
+                        // Reload to show updated group
+                        window.location.reload();
+                    }
                 } else {
                     alert('Split failed: ' + data.error);
+                }
+            });
+        }
+
+        function toggleStar(photoId, btn) {
+            const isStarred = btn.classList.contains('starred');
+            fetch('/api/favourite', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ photo_id: photoId, starred: !isStarred })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    btn.classList.toggle('starred', data.starred);
                 }
             });
         }
@@ -840,6 +1229,133 @@ GROUP_DETAIL_TEMPLATE = """
 </body>
 </html>
 """
+
+
+FAVOURITES_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Favourites</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: system-ui, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #eee;
+            margin: 0;
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .back-btn {
+            padding: 8px 16px;
+            background: #333;
+            border: none;
+            border-radius: 5px;
+            color: #eee;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .back-btn:hover { background: #444; }
+        h1 { margin: 0; font-size: 1.4em; }
+        .photos {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 12px;
+        }
+        .photo {
+            background: #222;
+            border-radius: 8px;
+            padding: 6px;
+        }
+        .photo-header {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 4px;
+        }
+        .star-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.3em;
+            padding: 2px 6px;
+            color: #fbbf24;
+        }
+        .star-btn:hover { opacity: 0.7; }
+        .photo img {
+            width: 100%;
+            height: 280px;
+            object-fit: contain;
+            background: #111;
+            border-radius: 6px;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <a class="back-btn" href="/">← Calendar</a>
+        <h1>Favourites ({{ photos | length }})</h1>
+    </div>
+    {% if photos %}
+    <div class="photos">
+        {% for photo in photos %}
+        <div class="photo" data-photo-id="{{ photo.id }}">
+            <div class="photo-header">
+                <button class="star-btn" onclick="removeStar('{{ photo.id }}', this)" title="Remove from favourites">&#x2605;</button>
+            </div>
+            <img src="/image/{{ photo.id }}" alt="">
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <h2>No favourites yet</h2>
+        <p>Click the ★ on photos to add them here</p>
+    </div>
+    {% endif %}
+    <script>
+        function removeStar(photoId, btn) {
+            fetch('/api/favourite', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ photo_id: photoId, starred: false })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    btn.closest('.photo').remove();
+                }
+            });
+        }
+    </script>
+</body>
+</html>
+"""
+
+
+@app.route('/favourites')
+def show_favourites():
+    """Show all favourited photos."""
+    conn = get_connection()
+    cursor = conn.execute("""
+        SELECT f.photo_id
+        FROM favourite_photos f
+        JOIN photos p ON f.photo_id = p.id
+        ORDER BY f.created_at DESC
+    """)
+    photos = [{'id': row[0]} for row in cursor.fetchall()]
+    conn.close()
+
+    return render_template_string(FAVOURITES_TEMPLATE, photos=photos)
 
 
 @app.route('/group/<group_id>')
@@ -851,9 +1367,10 @@ def show_group(group_id: str):
         # Composite group
         gid = int(group_id[2:])
         cursor = conn.execute("""
-            SELECT cg.photo_id, pp.source_path
+            SELECT cg.photo_id, pp.source_path, p.width, p.height
             FROM composite_groups cg
             JOIN photo_paths pp ON cg.photo_id = pp.photo_id
+            JOIN photos p ON cg.photo_id = p.id
             WHERE cg.group_id = ?
             GROUP BY cg.photo_id
             ORDER BY pp.source_path
@@ -862,8 +1379,9 @@ def show_group(group_id: str):
         # Singleton
         photo_id = group_id[2:]
         cursor = conn.execute("""
-            SELECT pp.photo_id, pp.source_path
+            SELECT pp.photo_id, pp.source_path, p.width, p.height
             FROM photo_paths pp
+            JOIN photos p ON pp.photo_id = p.id
             WHERE pp.photo_id = ?
             LIMIT 1
         """, (photo_id,))
@@ -871,19 +1389,21 @@ def show_group(group_id: str):
         conn.close()
         return "Invalid group ID", 400
 
-    photos = [{'id': row[0], 'path': row[1]} for row in cursor.fetchall()]
+    photos = [{'id': row[0], 'path': row[1], 'quality': get_quality(row[2], row[3])} for row in cursor.fetchall()]
 
     # Get the date for back link
     cache = get_cache(conn)
     date_info = cache['date_info'].get(group_id)
     back_date = get_date_for_display(date_info.date_value) if date_info else 'unknown'
 
+    favourites = get_favourites(conn)
     conn.close()
 
     return render_template_string(
         GROUP_DETAIL_TEMPLATE,
         group_id=group_id,
         photos=photos,
+        favourites=favourites,
         back_date=back_date,
     )
 
@@ -908,6 +1428,15 @@ if __name__ == '__main__':
     if cursor.fetchone()[0] == 0:
         print("ERROR: kept_photos view not found!")
         sys.exit(1)
+
+    # Create favourites table if it doesn't exist
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS favourite_photos (
+            photo_id TEXT PRIMARY KEY,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
 
     print("Building date index (this may take a moment)...")
     dates = get_all_dates_with_groups(conn)
