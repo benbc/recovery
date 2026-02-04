@@ -1,0 +1,3 @@
+#!/bin/bash
+# Check Python syntax for a file
+python3 -c "import ast; ast.parse(open('$1').read()); print('Syntax OK')"

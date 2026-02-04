@@ -16,11 +16,13 @@ Stages:
   1. Rehash - compute extended hashes (phash_16, colorhash) for kept photos
   1b. Pairs - compute all pairwise distances (for threshold tuning)
   2. Regroup - two-stage clustering with tuned pHash16+colorHash thresholds
+  3. Composite - join primary and secondary groups into composite groups
 
 Usage:
     ./run_pipeline2.py --stage 1     # Compute extended hashes
     ./run_pipeline2.py --stage 1b    # Compute all pairwise distances
     ./run_pipeline2.py --stage 2     # Regroup with tuned thresholds
+    ./run_pipeline2.py --stage 3     # Create composite groups
     ./run_pipeline2.py --status      # Show pipeline2 status
 """
 
@@ -108,6 +110,23 @@ def show_status():
         else:
             print("Regrouping not yet run.")
 
+        # composite_groups stats
+        cursor = conn.execute("""
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name='composite_groups'
+        """)
+        has_composite = cursor.fetchone() is not None
+
+        if has_composite:
+            group_count = conn.execute(
+                "SELECT COUNT(DISTINCT group_id) FROM composite_groups"
+            ).fetchone()[0]
+            photo_count = conn.execute(
+                "SELECT COUNT(*) FROM composite_groups"
+            ).fetchone()[0]
+            print(f"Composite groups:      {group_count:,}")
+            print(f"Photos in composite:   {photo_count:,}")
+
     print()
 
 
@@ -124,6 +143,10 @@ def run_stage(stage: str, args: argparse.Namespace):
     elif stage == "2":
         from pipeline2.stage2_regroup import run_stage2
         run_stage2()
+
+    elif stage == "3":
+        from pipeline2.stage3_composite import run_stage3
+        run_stage3()
 
     else:
         print(f"Unknown stage: {stage}")
