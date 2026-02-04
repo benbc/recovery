@@ -215,9 +215,9 @@ def parse_date_from_path(source_path: str) -> Optional[tuple[str, str, str]]:
         "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
     }
 
-    # "April 2010" or "2010 April"
+    # "April 2010" or "2010 April" or "May 08"
     for month_name, month_num in months.items():
-        # Month Year
+        # Month + 4-digit year
         pattern = rf"\b({month_name})\s+(\d{{4}})\b"
         match = re.search(pattern, source_path, re.IGNORECASE)
         if match:
@@ -225,11 +225,21 @@ def parse_date_from_path(source_path: str) -> Optional[tuple[str, str, str]]:
             if 1990 <= year <= 2030:
                 return f"{year}-{month_num:02d}", "medium", match.group(0)
 
-        # Year Month
+        # 4-digit year + Month
         pattern = rf"\b(\d{{4}})\s+({month_name})\b"
         match = re.search(pattern, source_path, re.IGNORECASE)
         if match:
             year = int(match.group(1))
+            if 1990 <= year <= 2030:
+                return f"{year}-{month_num:02d}", "medium", match.group(0)
+
+        # Month + 2-digit year (e.g., "May 08" meaning May 2008)
+        pattern = rf"\b({month_name})\s+(\d{{2}})\b"
+        match = re.search(pattern, source_path, re.IGNORECASE)
+        if match:
+            yy = int(match.group(2))
+            # 00-30 → 2000-2030, 31-99 → 1931-1999
+            year = 2000 + yy if yy <= 30 else 1900 + yy
             if 1990 <= year <= 2030:
                 return f"{year}-{month_num:02d}", "medium", match.group(0)
 
